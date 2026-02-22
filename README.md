@@ -1,6 +1,9 @@
 # yk-update-checker
 
-A modern Go application designed to scan GitHub repositories for Helm charts and check for dependency updates across HTTPS and OCI repositories. It features a sleek terminal-themed web interface and built-in Prometheus metrics for infrastructure monitoring.
+![Home Screenshot](docs/assets/homepage.png)
+
+A modern Go application designed to scan GitHub repositories for Helm charts and check for dependency updates across HTTPS and OCI repositories.
+ It features a sleek terminal-themed web interface and built-in Prometheus metrics for infrastructure monitoring.
 
 ## 🚀 Features
 
@@ -88,3 +91,9 @@ See `todo/grafana.md` for dashboard planning.
 ## 📜 Documentation
 
 - [Architecture Overview](docs/architecture.md)
+- [Command Line Flags](docs/flags.md)
+- [Docker Usage](docs/docker.md)
+
+## 🗺️ Roadmap
+
+See the [ROADMAP.md](ROADMAP.md) for planned features and future development goals.
