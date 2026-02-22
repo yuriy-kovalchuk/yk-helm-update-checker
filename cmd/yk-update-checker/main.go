@@ -22,6 +22,7 @@ func main() {
 	updateType := flag.String("update-type", "all", "Update type to check for: all, major, minor, patch")
 	webMode := flag.Bool("web", false, "Start in web server mode")
 	port := flag.String("port", "8080", "Port to run the web server on")
+	scanInterval := flag.Duration("scan-interval", 0, "Interval for background scans (e.g. 1h, 30m). Only works in web mode with -repo specified")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -35,10 +36,11 @@ func main() {
 
 	if *webMode {
 		srv := server.New(server.Config{
-			Port:        *port,
-			DefaultRepo: *repoURL,
-			SubPath:     *scanSubPath,
-			UpdateType:  *updateType,
+			Port:         *port,
+			DefaultRepo:  *repoURL,
+			SubPath:      *scanSubPath,
+			UpdateType:   *updateType,
+			ScanInterval: *scanInterval,
 		})
 		if err := srv.Start(); err != nil {
 			slog.Error("Server failed", "error", err)
