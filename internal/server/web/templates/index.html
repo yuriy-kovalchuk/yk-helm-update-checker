@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YK Helm Update Checker</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <style>
+        body {
+            background-color: #0c0c0c;
+            color: #00ff00;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            border-bottom: 1px solid #00ff00;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            background: #111;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-size: 0.8em;
+            text-transform: uppercase;
+            color: #00cc00;
+        }
+        input, select {
+            background: #000;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 8px 12px;
+            font-family: inherit;
+            outline: none;
+        }
+        input:focus {
+            box-shadow: 0 0 5px #00ff00;
+        }
+        button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 10px 25px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            align-self: flex-end;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #fff;
+            box-shadow: 0 0 10px #fff;
+        }
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border: 1px solid #222;
+        }
+        th {
+            background-color: #1a1a1a;
+            color: #00ff00;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        tr:nth-child(even) {
+            background-color: #0a0a0a;
+        }
+        tr:hover {
+            background-color: #151515;
+        }
+        .status {
+            margin: 15px 0;
+            font-style: italic;
+            color: #aaa;
+            border-left: 3px solid #00ff00;
+            padding-left: 10px;
+        }
+        .version-new {
+            color: #fff;
+            font-weight: bold;
+            background: #004400;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .type-badge {
+            font-size: 0.8em;
+            padding: 2px 6px;
+            border: 1px solid;
+            border-radius: 10px;
+        }
+        .type-https { border-color: #00ccff; color: #00ccff; }
+        .type-oci { border-color: #ff9900; color: #ff9900; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>[ YK-UPDATE-CHECKER v{{.Version}} ]</h1>
+        </header>
+
+        <div class="controls">
+            {{if not .IsDefaultRepo}}
+            <div class="input-group" style="flex-grow: 2;">
+                <label>Repository URL</label>
+                <input type="text" id="repo" value="{{.RepoURL}}" placeholder="https://github.com/org/repo">
+            </div>
+            {{else}}
+            <input type="hidden" id="repo" value="{{.RepoURL}}">
+            {{end}}
+            <div class="input-group">
+                <label>Scan Path</label>
+                <input type="text" id="path" value="{{.SubPath}}" placeholder=".">
+            </div>
+            <div class="input-group">
+                <label>Update Scope</label>
+                <select id="updateType">
+                    <option value="all" {{if eq .UpdateType "all"}}selected{{end}}>ALL STABLE</option>
+                    <option value="major" {{if eq .UpdateType "major"}}selected{{end}}>MAJOR ONLY</option>
+                    <option value="minor" {{if eq .UpdateType "minor"}}selected{{end}}>MINOR ONLY</option>
+                    <option value="patch" {{if eq .UpdateType "patch"}}selected{{end}}>PATCH ONLY</option>
+                </select>
+            </div>
+            <button id="refreshBtn">SCAN REPO</button>
+        </div>
+
+        <div id="status" class="status">System idle. Ready to scan.</div>
+
+        <table id="resultsTable">
+            <thead>
+                <tr>
+                    <th>Chart</th>
+                    <th>Dependency</th>
+                    <th>Type</th>
+                    <th>Current</th>
+                    <th>Latest Stable</th>
+                    <th>Scope</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Results will appear here -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const refreshBtn = document.getElementById('refreshBtn');
+        const statusDiv = document.getElementById('status');
+        const tableBody = document.querySelector('#resultsTable tbody');
+
+        refreshBtn.addEventListener('click', async () => {
+            const repo = document.getElementById('repo').value;
+            const path = document.getElementById('path').value;
+            const ut = document.getElementById('updateType').value;
+
+            if (!repo) {
+                statusDiv.innerText = 'Error: Repository URL is required.';
+                return;
+            }
+
+            refreshBtn.disabled = true;
+            statusDiv.innerText = '> Executing scan on ' + repo + '...';
+            tableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#666;">Processing...</td></tr>';
+
+            try {
+                const url = `/api/check?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}&update_type=${ut}`;
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Server error');
+                }
+                
+                const results = await response.json();
+                
+                tableBody.innerHTML = '';
+                if (results.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No Helm charts found in the specified path, or all dependencies are up to date.</td></tr>';
+                    statusDiv.innerText = 'Scan complete. No updates needed.';
+                } else {
+                    results.forEach(res => {
+                        const typeClass = res.repo_type === 'oci' ? 'type-oci' : 'type-https';
+                        const row = `<tr>
+                            <td>${res.chart_name}</td>
+                            <td>${res.dependency}</td>
+                            <td><span class="type-badge ${typeClass}">${res.repo_type}</span></td>
+                            <td>${res.current_version}</td>
+                            <td><span class="version-new">${res.latest_version}</span></td>
+                            <td style="text-transform:uppercase;">${res.update_type}</td>
+                        </tr>`;
+                        tableBody.innerHTML += row;
+                    });
+                }
+                statusDiv.innerText = `Scan complete. Found ${results.length} update(s).`;
+            } catch (err) {
+                statusDiv.innerText = '> FATAL ERROR: ' + err.message;
+                tableBody.innerHTML = '';
+            } finally {
+                refreshBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
