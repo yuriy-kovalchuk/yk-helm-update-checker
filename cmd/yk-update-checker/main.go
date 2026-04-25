@@ -68,7 +68,7 @@ func runCLI(cfg *config.Config, scopeStr string) error {
 		repos[i] = scan.RepoTarget{Name: r.Name, URL: r.URL, Path: r.Path}
 	}
 
-	runner := scan.NewRunner(repos, newExtractors, sc)
+	runner := scan.NewRunner(repos, newExtractors, sc, cfg.ParallelChecks)
 	slog.Info("starting scan", "repos", len(repos), "scope", sc)
 	results, err := runner.Run(context.Background())
 	if err != nil {

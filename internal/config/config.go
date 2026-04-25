@@ -20,8 +20,9 @@ type Repo struct {
 }
 
 type Config struct {
-	Repos      []Repo `yaml:"repos"`
-	UpdateType string `yaml:"update_type"`
+	Repos          []Repo `yaml:"repos"`
+	UpdateType     string `yaml:"update_type"`
+	ParallelChecks int    `yaml:"parallel_checks"`
 }
 
 func Load(path string) (*Config, error) {
@@ -35,6 +36,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.UpdateType == "" {
 		cfg.UpdateType = "all"
+	}
+	if cfg.ParallelChecks <= 0 {
+		cfg.ParallelChecks = 20
 	}
 	return &cfg, nil
 }

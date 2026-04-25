@@ -6,3 +6,4 @@ repos:
     repo: https://github.com/yuriy-kovalchuk/Homelab
     path: management-cluster/fluxcd
 update_type: all
+parallel_checks: 5

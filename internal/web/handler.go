@@ -27,13 +27,14 @@ type statusResponse struct {
 
 // Handler serves the web UI and JSON API.
 type Handler struct {
-	repos    []scan.RepoTarget
-	scope    version.Scope
-	scanning atomic.Bool // guards against concurrent scans; CompareAndSwap used in startScan
-	mu       sync.RWMutex
-	results  []scan.Result
-	lastScan time.Time
-	count    int
+	repos          []scan.RepoTarget
+	scope          version.Scope
+	parallelChecks int
+	scanning       atomic.Bool // guards against concurrent scans; CompareAndSwap used in startScan
+	mu             sync.RWMutex
+	results        []scan.Result
+	lastScan       time.Time
+	count          int
 }
 
 func NewHandler(cfg *config.Config, scopeStr string) *Handler {
@@ -42,8 +43,9 @@ func NewHandler(cfg *config.Config, scopeStr string) *Handler {
 		repos[i] = scan.RepoTarget{Name: r.Name, URL: r.URL, Path: r.Path}
 	}
 	return &Handler{
-		repos: repos,
-		scope: version.ParseScope(scopeStr),
+		repos:          repos,
+		scope:          version.ParseScope(scopeStr),
+		parallelChecks: cfg.ParallelChecks,
 	}
 }
 
@@ -85,7 +87,7 @@ func (h *Handler) runScan() {
 	newExtractors := func() []extractor.Extractor {
 		return []extractor.Extractor{extractor.NewHelmChart(), extractor.NewFluxCD()}
 	}
-	runner := scan.NewRunner(h.repos, newExtractors, h.scope)
+	runner := scan.NewRunner(h.repos, newExtractors, h.scope, h.parallelChecks)
 
 	slog.Info("web scan started", "repos", len(h.repos))
 	results, err := runner.Run(context.Background())

@@ -7,10 +7,15 @@
 #   patch – only patch upgrades within the same major.minor
 update_type: all
 
+# parallel_checks limits how many registry version lookups run at once.
+# Lower values reduce memory and outbound connection pressure.
+# Default: 5
+parallel_checks: 5
+
 repos:
   - name: homelab
     repo: https://github.com/example/my-gitops-repo
-    path: kubernetes/apps          # optional: scan only this sub-path
+    path: kubernetes/apps # optional: scan only this sub-path
 
   - name: flux-cluster
     repo: https://github.com/example/flux-cluster

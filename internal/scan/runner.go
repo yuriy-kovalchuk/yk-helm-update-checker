@@ -23,16 +23,17 @@ type RepoTarget struct {
 
 // Runner clones repositories and runs the Scanner on each one.
 type Runner struct {
-	repos         []RepoTarget
-	newExtractors func() []extractor.Extractor
-	scope         version.Scope
+	repos          []RepoTarget
+	newExtractors  func() []extractor.Extractor
+	scope          version.Scope
+	parallelChecks int
 }
 
 // NewRunner creates a Runner. newExtractors is called once per repo scan so
 // that stateful extractors receive a fresh instance per repository and
 // concurrent scans never share mutable extractor state.
-func NewRunner(repos []RepoTarget, newExtractors func() []extractor.Extractor, scope version.Scope) *Runner {
-	return &Runner{repos: repos, newExtractors: newExtractors, scope: scope}
+func NewRunner(repos []RepoTarget, newExtractors func() []extractor.Extractor, scope version.Scope, parallelChecks int) *Runner {
+	return &Runner{repos: repos, newExtractors: newExtractors, scope: scope, parallelChecks: parallelChecks}
 }
 
 // Run clones all repos into a temporary directory, scans them, and returns
@@ -45,7 +46,7 @@ func (r *Runner) Run(ctx context.Context) ([]Result, error) {
 	}
 	defer os.RemoveAll(workDir)
 
-	scanner := NewScanner(r.newExtractors, r.scope)
+	scanner := NewScanner(r.newExtractors, r.scope, r.parallelChecks)
 
 	var (
 		results []Result

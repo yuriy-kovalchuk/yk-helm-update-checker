@@ -2,7 +2,6 @@ package extractor
 
 import (
 	"bytes"
-	"io"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -86,7 +85,12 @@ type FluxCD struct {
 	oci  map[string]repoEntry // keyed by "namespace/name"
 }
 
-func NewFluxCD() *FluxCD { return &FluxCD{} }
+func NewFluxCD() *FluxCD {
+	return &FluxCD{
+		helm: make(map[string]repoEntry),
+		oci:  make(map[string]repoEntry),
+	}
+}
 
 func (*FluxCD) Type() string { return "fluxcd" }
 
@@ -94,55 +98,47 @@ func (*FluxCD) Match(_ string, content []byte) bool {
 	return bytes.Contains(content, []byte("HelmRelease"))
 }
 
-// Prepare collects HelmRepository and OCIRepository resources from all files
-// so that HelmRelease sourceRef/chartRef lookups work across files.
-// It handles multi-document YAML (documents separated by ---).
-func (f *FluxCD) Prepare(files map[string][]byte) error {
-	helm := make(map[string]repoEntry)
-	oci := make(map[string]repoEntry)
+// PrepareFile processes a single YAML file, collecting any HelmRepository and
+// OCIRepository resources it contains so that HelmRelease sourceRef/chartRef
+// lookups work across files. It is called once per file during the pre-pass.
+func (f *FluxCD) PrepareFile(_ string, content []byte) error {
+	if !bytes.Contains(content, []byte("HelmRepository")) &&
+		!bytes.Contains(content, []byte("OCIRepository")) {
+		return nil
+	}
 
-	for _, content := range files {
-		if !bytes.Contains(content, []byte("HelmRepository")) &&
-			!bytes.Contains(content, []byte("OCIRepository")) {
-			continue
+	dec := yaml.NewDecoder(bytes.NewReader(content))
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for {
+		var doc fluxSourceResource
+		if err := dec.Decode(&doc); err != nil {
+			break
 		}
 
-		dec := yaml.NewDecoder(bytes.NewReader(content))
-		for {
-			var doc fluxSourceResource
-			if err := dec.Decode(&doc); err != nil {
-				if err != io.EOF {
-					break
-				}
-				break
-			}
+		key := doc.Metadata.Namespace + "/" + doc.Metadata.Name
 
-			key := doc.Metadata.Namespace + "/" + doc.Metadata.Name
+		switch doc.Kind {
+		case "HelmRepository":
+			protocol, bare := ParseProtocol(doc.Spec.URL)
+			f.helm[key] = repoEntry{protocol: protocol, repoURL: bare}
 
-			switch doc.Kind {
-			case "HelmRepository":
-				protocol, bare := ParseProtocol(doc.Spec.URL)
-				helm[key] = repoEntry{protocol: protocol, repoURL: bare}
-
-			case "OCIRepository":
-				protocol, bare := ParseProtocol(doc.Spec.URL)
-				// OCI URL encodes the chart name as its last path segment:
-				//   ghcr.io/org/charts/chartname → repo=ghcr.io/org/charts  chart=chartname
-				repo, chart := SplitOCIRef(bare)
-				oci[key] = repoEntry{
-					protocol:  protocol,
-					repoURL:   repo,
-					chartName: chart,
-					version:   doc.Spec.Ref.Tag,
-				}
+		case "OCIRepository":
+			protocol, bare := ParseProtocol(doc.Spec.URL)
+			// OCI URL encodes the chart name as its last path segment:
+			//   ghcr.io/org/charts/chartname → repo=ghcr.io/org/charts  chart=chartname
+			repo, chart := SplitOCIRef(bare)
+			f.oci[key] = repoEntry{
+				protocol:  protocol,
+				repoURL:   repo,
+				chartName: chart,
+				version:   doc.Spec.Ref.Tag,
 			}
 		}
 	}
 
-	f.mu.Lock()
-	f.helm = helm
-	f.oci = oci
-	f.mu.Unlock()
 	return nil
 }
 

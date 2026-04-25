@@ -25,13 +25,13 @@ type Extractor interface {
 
 // Contextual is an optional extension for extractors that need a pre-pass
 // over all files in the scan root before extraction begins.
-// The scanner calls Prepare once with every YAML file it found, then
-// proceeds with the normal Match/Extract loop.
+// The scanner calls PrepareFile once per YAML file during the first pass,
+// then proceeds with the normal Match/Extract loop.
 // This is used by the FluxCD extractor to resolve cross-file references
 // (HelmRelease → HelmRepository / OCIRepository).
 type Contextual interface {
 	Extractor
-	Prepare(files map[string][]byte) error
+	PrepareFile(path string, content []byte) error
 }
 
 // SplitOCIRef splits the last path segment off a bare OCI URL.
