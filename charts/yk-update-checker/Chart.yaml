@@ -9,6 +9,7 @@ keywords:
   - fluxcd
   - update-checker
   - gitops
+  - homelab
 home: https://github.com/yuriy-kovalchuk/yk-helm-update-checker
 sources:
   - https://github.com/yuriy-kovalchuk/yk-helm-update-checker
