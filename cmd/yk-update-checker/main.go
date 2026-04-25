@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"sort"
 	"text/tabwriter"
@@ -23,6 +24,7 @@ func main() {
 	scopeFlag := flag.String("scope",   "",            "update scope: all, major, minor, patch (overrides config)")
 	webMode   := flag.Bool("web",       false,         "start web server instead of CLI scan")
 	port      := flag.String("port",    "8080",        "web server port")
+	pprofAddr := flag.String("pprof",   "",            "enable pprof on this address (e.g. localhost:6060)")
 	verbose   := flag.Bool("verbose",   false,         "enable debug logging")
 	flag.Parse()
 
@@ -31,6 +33,15 @@ func main() {
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+
+	if *pprofAddr != "" {
+		go func() {
+			slog.Info("pprof server started", "addr", "http://"+*pprofAddr+"/debug/pprof/")
+			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
+				slog.Error("pprof server failed", "error", err)
+			}
+		}()
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
