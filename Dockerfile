@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ─── Build ────────────────────────────────────────────────────────────────────
-FROM golang:1.26.0-alpine AS builder
+# BUILDPLATFORM pins the builder to the host's native architecture so the Go
+# toolchain runs at full speed. TARGETOS/TARGETARCH are injected by Buildx and
+# tell the Go compiler which platform to cross-compile for.
+FROM --platform=$BUILDPLATFORM golang:1.26.0-alpine AS builder
 
 WORKDIR /app
 
@@ -11,7 +14,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-COPY cmd/     ./cmd/
+COPY cmd/      ./cmd/
 COPY internal/ ./internal/
 
 # Override at build time: docker build --build-arg VERSION=1.2.3 ...
@@ -19,9 +22,13 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
+# Buildx sets TARGETOS and TARGETARCH automatically for each platform variant.
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    CGO_ENABLED=0 GOOS=linux go build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
         -trimpath \
         -ldflags "-s -w \
             -X github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/config.Version=${VERSION} \
@@ -33,6 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # ─── Runtime ──────────────────────────────────────────────────────────────────
 # Distroless static: no shell, no package manager, includes CA certificates
 # and /tmp. Runs as non-root user 65532 by default.
+# Buildx selects the correct arch variant of this image automatically.
 FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="yk-update-checker" \
