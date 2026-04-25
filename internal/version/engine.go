@@ -3,7 +3,6 @@ package version
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -134,13 +133,8 @@ func latestHTTPS(ctx context.Context, repoURL, chartName, currentVersion string,
 		return "", fmt.Errorf("GET %s returned %d", indexURL, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
 	var index helmIndex
-	if err := yaml.Unmarshal(body, &index); err != nil {
+	if err := yaml.NewDecoder(resp.Body).Decode(&index); err != nil {
 		return "", fmt.Errorf("parse index.yaml: %w", err)
 	}
 
