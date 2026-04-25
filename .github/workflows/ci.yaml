@@ -27,9 +27,9 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.11.4
           args: --timeout=5m
 
       - name: Run tests
@@ -39,7 +39,7 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           files: coverage.txt
-        continue-on-error: true  # non-blocking; coverage upload failures don't break CI
+        continue-on-error: true # non-blocking; coverage upload failures don't break CI
 
   # ── Go: build binary ───────────────────────────────────────────────────────
   build:
