@@ -40,10 +40,11 @@ type Scanner struct {
 	newExtractors  func() []extractor.Extractor
 	scope          version.Scope
 	parallelChecks int
+	cache          *version.IndexCache
 }
 
-func NewScanner(newExtractors func() []extractor.Extractor, scope version.Scope, parallelChecks int) *Scanner {
-	return &Scanner{newExtractors: newExtractors, scope: scope, parallelChecks: parallelChecks}
+func NewScanner(newExtractors func() []extractor.Extractor, scope version.Scope, parallelChecks int, cache *version.IndexCache) *Scanner {
+	return &Scanner{newExtractors: newExtractors, scope: scope, parallelChecks: parallelChecks, cache: cache}
 }
 
 // pendingCheck holds everything needed to perform one version lookup.
@@ -121,7 +122,7 @@ func (s *Scanner) ScanDir(ctx context.Context, source, root string) []Result {
 		mu      sync.Mutex
 	)
 	runConcurrent(ctx, pending, s.parallelChecks, func(ctx context.Context, p pendingCheck) {
-		latest, err := version.Latest(ctx, p.ref.Protocol, p.ref.Repository, p.ref.Name, p.ref.CurrentVersion, s.scope)
+		latest, err := version.Latest(ctx, s.cache, p.ref.Protocol, p.ref.Repository, p.ref.Name, p.ref.CurrentVersion, s.scope)
 		if err != nil {
 			slog.Debug("version check failed", "dep", p.ref.Name, "error", err)
 			latest = ""

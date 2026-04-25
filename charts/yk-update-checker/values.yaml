@@ -24,6 +24,15 @@ config:
   # One of: all | major | minor | patch
   updateType: all
 
+  # Maximum concurrent registry version lookups per scan.
+  # Lower values reduce memory and outbound connection pressure.
+  parallelChecks: 5
+
+  # Persist git clones between scans to avoid full re-clones.
+  # Leave empty to use a temporary directory (cleaned up after each scan).
+  # When set, mount a PVC at this path for durable storage.
+  gitCacheDir: ""
+
   # List of Git repositories to scan.
   repos: []
   # repos:
@@ -91,10 +100,10 @@ ingress:
 resources:
   requests:
     cpu: 50m
-    memory: 64Mi
+    memory: 128Mi
   limits:
     cpu: 500m
-    memory: 256Mi
+    memory: 512Mi
 
 livenessProbe:
   httpGet:
@@ -107,7 +116,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /ready
     port: http
   initialDelaySeconds: 5
   periodSeconds: 10

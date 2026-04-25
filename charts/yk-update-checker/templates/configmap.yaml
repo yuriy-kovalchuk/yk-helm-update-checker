@@ -9,6 +9,10 @@ metadata:
 data:
   config.yaml: |
     update_type: {{ .Values.config.updateType | quote }}
+    parallel_checks: {{ .Values.config.parallelChecks }}
+    {{- if .Values.config.gitCacheDir }}
+    git_cache_dir: {{ .Values.config.gitCacheDir | quote }}
+    {{- end }}
     repos:
     {{- if .Values.config.repos }}
     {{- range .Values.config.repos }}

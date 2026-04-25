@@ -38,10 +38,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         ./cmd/yk-update-checker
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────
-# Distroless static: no shell, no package manager, includes CA certificates
-# and /tmp. Runs as non-root user 65532 by default.
+# Chainguard git: includes git for repo cloning, no shell, no package manager,
+# includes CA certificates. Runs as non-root user 65532 by default.
 # Buildx selects the correct arch variant of this image automatically.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM cgr.dev/chainguard/git:latest
 
 LABEL org.opencontainers.image.title="yk-update-checker" \
       org.opencontainers.image.description="Scan Helm and FluxCD repositories for chart updates" \

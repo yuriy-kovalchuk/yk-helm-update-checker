@@ -30,6 +30,7 @@ type Handler struct {
 	repos          []scan.RepoTarget
 	scope          version.Scope
 	parallelChecks int
+	gitCacheDir    string
 	scanning       atomic.Bool // guards against concurrent scans; CompareAndSwap used in startScan
 	mu             sync.RWMutex
 	results        []scan.Result
@@ -46,6 +47,7 @@ func NewHandler(cfg *config.Config, scopeStr string) *Handler {
 		repos:          repos,
 		scope:          version.ParseScope(scopeStr),
 		parallelChecks: cfg.ParallelChecks,
+		gitCacheDir:    cfg.GitCacheDir,
 	}
 }
 
@@ -56,6 +58,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/status", h.getStatus)
 	mux.HandleFunc("GET /api/config", h.getConfig)
 	mux.HandleFunc("GET /health", h.health)
+	mux.HandleFunc("GET /ready", h.ready)
 }
 
 func (h *Handler) serveUI(w http.ResponseWriter, _ *http.Request) {
@@ -87,7 +90,7 @@ func (h *Handler) runScan() {
 	newExtractors := func() []extractor.Extractor {
 		return []extractor.Extractor{extractor.NewHelmChart(), extractor.NewFluxCD()}
 	}
-	runner := scan.NewRunner(h.repos, newExtractors, h.scope, h.parallelChecks)
+	runner := scan.NewRunner(h.repos, newExtractors, h.scope, h.parallelChecks, h.gitCacheDir)
 
 	slog.Info("web scan started", "repos", len(h.repos))
 	results, err := runner.Run(context.Background())
@@ -137,6 +140,17 @@ func (h *Handler) getConfig(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// ready returns 200 once the server is up and not mid-scan, 503 while a scan
+// is running. Kubernetes uses this to hold traffic until the pod is stable.
+func (h *Handler) ready(w http.ResponseWriter, _ *http.Request) {
+	if h.scanning.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]string{"status": "scanning"})
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ready"})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

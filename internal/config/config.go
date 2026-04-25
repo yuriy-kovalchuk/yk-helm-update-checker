@@ -23,6 +23,7 @@ type Config struct {
 	Repos          []Repo `yaml:"repos"`
 	UpdateType     string `yaml:"update_type"`
 	ParallelChecks int    `yaml:"parallel_checks"`
+	GitCacheDir    string `yaml:"git_cache_dir"`
 }
 
 func Load(path string) (*Config, error) {
