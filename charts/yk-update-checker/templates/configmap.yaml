@@ -1,0 +1,24 @@
+{{- if not .Values.existingSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yk-update-checker.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yk-update-checker.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    update_type: {{ .Values.config.updateType | quote }}
+    repos:
+    {{- if .Values.config.repos }}
+    {{- range .Values.config.repos }}
+      - name: {{ .name | quote }}
+        repo: {{ .repo | quote }}
+        {{- if .path }}
+        path: {{ .path | quote }}
+        {{- end }}
+    {{- end }}
+    {{- else }}
+      []
+    {{- end }}
+{{- end }}

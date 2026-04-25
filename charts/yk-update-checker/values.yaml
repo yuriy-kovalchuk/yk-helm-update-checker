@@ -1,0 +1,144 @@
+# Default values for yk-update-checker.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/yuriy-kovalchuk/yk-helm-update-checker
+  pullPolicy: IfNotPresent
+  # Overrides the image tag. Defaults to Chart.appVersion when empty.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Enable verbose / debug logging in the application.
+verbose: false
+
+# Application configuration.
+# These values are rendered into a config.yaml mounted at /etc/yk-update-checker/config.yaml.
+#
+# If existingSecret is set, that secret is mounted instead and this section is ignored.
+config:
+  # Maximum upgrade scope to report.
+  # One of: all | major | minor | patch
+  updateType: all
+
+  # List of Git repositories to scan.
+  repos: []
+  # repos:
+  #   - name: homelab
+  #     repo: https://github.com/example/my-gitops-repo
+  #     path: kubernetes/apps          # optional: scan only this sub-path
+  #   - name: flux-cluster
+  #     repo: https://github.com/example/flux-cluster
+  #     path: clusters/production/fluxcd
+
+# Reference an existing Secret that already contains config.yaml.
+# The secret must have a key named "config.yaml".
+# When set, the config section above is ignored and no ConfigMap is created.
+existingSecret: ""
+
+serviceAccount:
+  # Create a dedicated ServiceAccount for this deployment.
+  create: true
+  # Disable automatic token mounting (principle of least privilege).
+  automount: false
+  # Additional annotations, e.g. for IRSA / Workload Identity.
+  annotations: {}
+  # Override the generated name.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  #   kubernetes.io/ingress.class: nginx
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: yk-update-checker.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # tls:
+  #   - hosts:
+  #       - yk-update-checker.example.com
+  #     secretName: yk-update-checker-tls
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 30
+  failureThreshold: 3
+  timeoutSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+pdb:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables injected into the container.
+extraEnv: []
+# extraEnv:
+#   - name: HTTPS_PROXY
+#     value: http://proxy.example.com:3128
+
+# Extra volumes and mounts (e.g. for SSH keys or additional config).
+extraVolumes: []
+extraVolumeMounts: []
+
+# Extra CLI flags passed verbatim to the binary after the standard ones.
+extraArgs: []

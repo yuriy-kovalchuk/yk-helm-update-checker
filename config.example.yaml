@@ -1,0 +1,17 @@
+# yk-update-checker configuration
+#
+# update_type controls the maximum upgrade scope reported.
+#   all   – any newer stable release (default)
+#   major – any newer release (same as all)
+#   minor – only minor and patch upgrades within the same major
+#   patch – only patch upgrades within the same major.minor
+update_type: all
+
+repos:
+  - name: homelab
+    repo: https://github.com/example/my-gitops-repo
+    path: kubernetes/apps          # optional: scan only this sub-path
+
+  - name: flux-cluster
+    repo: https://github.com/example/flux-cluster
+    path: clusters/production/fluxcd

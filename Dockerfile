@@ -1,42 +1,48 @@
-# Stage 1: Build
+# syntax=docker/dockerfile:1
+
+# ─── Build ────────────────────────────────────────────────────────────────────
 FROM golang:1.26.0-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache git make
-
 WORKDIR /app
 
-# Copy go mod and sum files
+# Download modules first; this layer is cached until go.mod or go.sum change.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy source code explicitly
-COPY Makefile ./
-COPY cmd/ ./cmd/
+COPY cmd/     ./cmd/
 COPY internal/ ./internal/
 
-# Build the application using the Makefile to ensure version injection
-RUN make build
+# Override at build time: docker build --build-arg VERSION=1.2.3 ...
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
 
-# Stage 2: Runtime
-FROM alpine:3.23.3
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=linux go build \
+        -trimpath \
+        -ldflags "-s -w \
+            -X github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/config.Version=${VERSION} \
+            -X github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/config.Commit=${COMMIT} \
+            -X github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/config.BuildDate=${BUILD_DATE}" \
+        -o /yk-update-checker \
+        ./cmd/yk-update-checker
 
-# Install runtime dependencies (git is required for cloning, ca-certificates for HTTPS, openssh-client for SSH)
-RUN apk add --no-cache git ca-certificates tzdata openssh-client
+# ─── Runtime ──────────────────────────────────────────────────────────────────
+# Distroless static: no shell, no package manager, includes CA certificates
+# and /tmp. Runs as non-root user 65532 by default.
+FROM gcr.io/distroless/static-debian12:nonroot
 
-WORKDIR /app
+LABEL org.opencontainers.image.title="yk-update-checker" \
+      org.opencontainers.image.description="Scan Helm and FluxCD repositories for chart updates" \
+      org.opencontainers.image.source="https://github.com/yuriy-kovalchuk/yk-helm-update-checker" \
+      org.opencontainers.image.licenses="MIT"
 
-# Copy the binary from the builder stage
-COPY --from=builder /app/bin/yk-update-checker /app/yk-update-checker
+COPY --from=builder /yk-update-checker /yk-update-checker
 
-# Create a non-root user with a high UID for security compliance
-RUN addgroup -g 10001 appgroup && \
-    adduser -D -u 10001 -G appgroup appuser
-USER appuser
-
-# Expose the default port
 EXPOSE 8080
 
-# Default command
-ENTRYPOINT ["/app/yk-update-checker"]
+ENTRYPOINT ["/yk-update-checker"]
 CMD ["-web"]
