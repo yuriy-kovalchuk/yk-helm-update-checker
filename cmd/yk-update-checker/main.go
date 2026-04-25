@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,8 +10,11 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/config"
 	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/extractor"
@@ -79,7 +83,7 @@ func runCLI(cfg *config.Config, scopeStr string) error {
 		repos[i] = scan.RepoTarget{Name: r.Name, URL: r.URL, Path: r.Path}
 	}
 
-	runner := scan.NewRunner(repos, newExtractors, sc, cfg.ParallelChecks)
+	runner := scan.NewRunner(repos, newExtractors, sc, cfg.ParallelChecks, cfg.GitCacheDir)
 	slog.Info("starting scan", "repos", len(repos), "scope", sc)
 	results, err := runner.Run(context.Background())
 	if err != nil {
@@ -134,10 +138,29 @@ func startWeb(cfg *config.Config, scope, port string) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	addr := ":" + port
-	slog.Info("web server started", "addr", "http://localhost"+addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		fatal("server: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		slog.Info("web server started", "addr", "http://localhost:"+port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server error", "error", err)
+			stop()
+		}
+	}()
+
+	<-ctx.Done()
+	slog.Info("shutting down")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("graceful shutdown failed", "error", err)
 	}
 }
 

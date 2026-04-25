@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -48,6 +49,40 @@ func ParseScope(s string) Scope {
 // indefinitely.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
+// IndexCache stores parsed Helm index.yaml responses for the duration of a
+// scan so that charts sharing a registry avoid redundant HTTP fetches.
+type IndexCache struct {
+	mu    sync.RWMutex
+	items map[string]*helmIndex
+}
+
+func NewIndexCache() *IndexCache {
+	return &IndexCache{items: make(map[string]*helmIndex)}
+}
+
+func (c *IndexCache) getOrFetch(ctx context.Context, repoURL string) (*helmIndex, error) {
+	c.mu.RLock()
+	idx, ok := c.items[repoURL]
+	c.mu.RUnlock()
+	if ok {
+		return idx, nil
+	}
+
+	idx, err := fetchIndex(ctx, repoURL)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	if existing, ok := c.items[repoURL]; ok {
+		c.mu.Unlock()
+		return existing, nil
+	}
+	c.items[repoURL] = idx
+	c.mu.Unlock()
+	return idx, nil
+}
+
 // Latest returns the latest stable chart version available in the registry.
 //
 // protocol is "https" or "oci".
@@ -57,7 +92,7 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 // scope controls which upgrade levels are eligible.
 //
 // Returns an empty string (no error) when no eligible update exists.
-func Latest(ctx context.Context, protocol, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
+func Latest(ctx context.Context, cache *IndexCache, protocol, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
 	if repoURL == "" {
 		return "", fmt.Errorf("repository URL is empty for chart %q", chartName)
 	}
@@ -66,7 +101,7 @@ func Latest(ctx context.Context, protocol, repoURL, chartName, currentVersion st
 	}
 	switch strings.ToLower(protocol) {
 	case "https":
-		return latestHTTPS(ctx, repoURL, chartName, currentVersion, scope)
+		return latestHTTPS(ctx, cache, repoURL, chartName, currentVersion, scope)
 	case "oci":
 		return latestOCI(ctx, repoURL, chartName, currentVersion, scope)
 	default:
@@ -115,32 +150,40 @@ type helmIndex struct {
 	Entries map[string][]helmIndexEntry `yaml:"entries"`
 }
 
-func latestHTTPS(ctx context.Context, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
+func fetchIndex(ctx context.Context, repoURL string) (*helmIndex, error) {
 	base := strings.TrimSuffix(repoURL, "/")
 	indexURL := "https://" + base + "/index.yaml"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("build request for %s: %w", indexURL, err)
+		return nil, fmt.Errorf("build request for %s: %w", indexURL, err)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", indexURL, err)
+		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s returned %d", indexURL, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s returned %d", indexURL, resp.StatusCode)
 	}
 
 	var index helmIndex
 	if err := yaml.NewDecoder(resp.Body).Decode(&index); err != nil {
-		return "", fmt.Errorf("parse index.yaml: %w", err)
+		return nil, fmt.Errorf("parse index.yaml: %w", err)
+	}
+	return &index, nil
+}
+
+func latestHTTPS(ctx context.Context, cache *IndexCache, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
+	index, err := cache.getOrFetch(ctx, repoURL)
+	if err != nil {
+		return "", err
 	}
 
 	entries, ok := index.Entries[chartName]
 	if !ok {
-		return "", fmt.Errorf("chart %q not found in index at %s", chartName, base)
+		return "", fmt.Errorf("chart %q not found in index at %s", chartName, strings.TrimSuffix(repoURL, "/"))
 	}
 
 	current, err := semver.NewVersion(currentVersion)
