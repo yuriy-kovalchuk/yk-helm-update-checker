@@ -1,0 +1,44 @@
+yk-update-checker has been deployed successfully.
+
+{{- if .Values.ingress.enabled }}
+Access the web UI at:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+
+{{- else if eq .Values.service.type "NodePort" }}
+Get the application URL by running:
+  export NODE_PORT=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "yk-update-checker.fullname" . }} -o jsonpath='{.spec.ports[0].nodePort}')
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath='{.items[0].status.addresses[0].address}')
+  echo "http://$NODE_IP:$NODE_PORT"
+
+{{- else if eq .Values.service.type "LoadBalancer" }}
+The LoadBalancer IP may take a minute to provision. Watch progress with:
+  kubectl get svc --namespace {{ .Release.Namespace }} -w {{ include "yk-update-checker.fullname" . }}
+
+Once ready:
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "yk-update-checker.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "http://$SERVICE_IP:{{ .Values.service.port }}"
+
+{{- else }}
+Port-forward to reach the web UI locally:
+  kubectl --namespace {{ .Release.Namespace }} port-forward \
+    $(kubectl get pods --namespace {{ .Release.Namespace }} \
+      -l "app.kubernetes.io/name={{ include "yk-update-checker.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" \
+      -o jsonpath='{.items[0].metadata.name}') \
+    8080:8080
+
+Then open: http://127.0.0.1:8080
+{{- end }}
+
+{{- if not .Values.config.repos }}
+
+WARNING: No repositories are configured (config.repos is empty).
+         The scanner will have nothing to scan. Add repos to your values:
+
+           config:
+             repos:
+               - name: my-gitops
+                 repo: https://github.com/example/gitops
+                 path: kubernetes/apps
+{{- end }}

@@ -1,0 +1,186 @@
+package version
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"gopkg.in/yaml.v3"
+)
+
+type Scope string
+
+const (
+	ScopeAll   Scope = "all"
+	ScopeMajor Scope = "major"
+	ScopeMinor Scope = "minor"
+	ScopePatch Scope = "patch"
+)
+
+func (s Scope) IsValid() bool {
+	switch s {
+	case ScopeAll, ScopeMajor, ScopeMinor, ScopePatch:
+		return true
+	}
+	return false
+}
+
+// ParseScope converts a string to a Scope, falling back to ScopeAll for
+// unrecognised values. Use this instead of bare Scope(s) casts so that
+// the fallback logic lives in one place.
+func ParseScope(s string) Scope {
+	sc := Scope(s)
+	if sc.IsValid() {
+		return sc
+	}
+	return ScopeAll
+}
+
+// httpClient is shared across all version checks. The 30-second timeout
+// prevents a slow or unresponsive registry from stalling a goroutine
+// indefinitely.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// Latest returns the latest stable chart version available in the registry.
+//
+// protocol is "https" or "oci".
+// repoURL is the registry base URL with the scheme already stripped.
+// chartName is the chart to look up within the registry.
+// currentVersion is the currently pinned semver string.
+// scope controls which upgrade levels are eligible.
+//
+// Returns an empty string (no error) when no eligible update exists.
+func Latest(ctx context.Context, protocol, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
+	if repoURL == "" {
+		return "", fmt.Errorf("repository URL is empty for chart %q", chartName)
+	}
+	if currentVersion == "" {
+		return "", fmt.Errorf("current version is empty for chart %q", chartName)
+	}
+	switch strings.ToLower(protocol) {
+	case "https":
+		return latestHTTPS(ctx, repoURL, chartName, currentVersion, scope)
+	case "oci":
+		return latestOCI(ctx, repoURL, chartName, currentVersion, scope)
+	default:
+		return "", fmt.Errorf("unsupported protocol: %s", protocol)
+	}
+}
+
+// latestFromTags returns the highest stable version from tags that is newer
+// than current and within the allowed scope.
+func latestFromTags(current *semver.Version, tags []string, scope Scope) string {
+	var candidates []*semver.Version
+	for _, t := range tags {
+		v, err := semver.NewVersion(t)
+		if err != nil || v.Prerelease() != "" {
+			continue
+		}
+		if !v.GreaterThan(current) {
+			continue
+		}
+		switch scope {
+		case ScopePatch:
+			if v.Major() != current.Major() || v.Minor() != current.Minor() {
+				continue
+			}
+		case ScopeMinor:
+			if v.Major() != current.Major() {
+				continue
+			}
+		case ScopeAll, ScopeMajor:
+			// any newer stable version is eligible
+		}
+		candidates = append(candidates, v)
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Sort(semver.Collection(candidates))
+	return candidates[len(candidates)-1].Original()
+}
+
+type helmIndexEntry struct {
+	Version string `yaml:"version"`
+}
+
+type helmIndex struct {
+	Entries map[string][]helmIndexEntry `yaml:"entries"`
+}
+
+func latestHTTPS(ctx context.Context, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
+	base := strings.TrimSuffix(repoURL, "/")
+	indexURL := "https://" + base + "/index.yaml"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request for %s: %w", indexURL, err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", indexURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s returned %d", indexURL, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var index helmIndex
+	if err := yaml.Unmarshal(body, &index); err != nil {
+		return "", fmt.Errorf("parse index.yaml: %w", err)
+	}
+
+	entries, ok := index.Entries[chartName]
+	if !ok {
+		return "", fmt.Errorf("chart %q not found in index at %s", chartName, base)
+	}
+
+	current, err := semver.NewVersion(currentVersion)
+	if err != nil {
+		return "", fmt.Errorf("invalid current version %q: %w", currentVersion, err)
+	}
+
+	tags := make([]string, 0, len(entries))
+	for _, e := range entries {
+		tags = append(tags, e.Version)
+	}
+	return latestFromTags(current, tags, scope), nil
+}
+
+func latestOCI(ctx context.Context, repoURL, chartName, currentVersion string, scope Scope) (string, error) {
+	ref := strings.TrimSuffix(repoURL, "/") + "/" + chartName
+
+	repo, err := name.NewRepository(ref)
+	if err != nil {
+		return "", fmt.Errorf("parse OCI ref %q: %w", ref, err)
+	}
+
+	tags, err := remote.List(repo,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	)
+	if err != nil {
+		return "", fmt.Errorf("list tags for %q: %w", ref, err)
+	}
+
+	current, err := semver.NewVersion(currentVersion)
+	if err != nil {
+		return "", fmt.Errorf("invalid current version %q: %w", currentVersion, err)
+	}
+
+	return latestFromTags(current, tags, scope), nil
+}

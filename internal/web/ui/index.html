@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Helm Update Checker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:          #0d1117;
+      --surface:     #161b22;
+      --surface-alt: #1c2128;
+      --surface-hi:  #21262d;
+      --border:      #30363d;
+      --border-hi:   #21262d;
+      --text:        #c9d1d9;
+      --text-muted:  #8b949e;
+      --primary:     #58a6ff;
+      --primary-bg:  rgba(88,166,255,.12);
+      --green:       #3fb950;
+      --green-bg:    rgba(63,185,80,.12);
+      --yellow:      #e3b341;
+      --yellow-bg:   rgba(227,179,65,.12);
+      --red:         #f85149;
+      --red-bg:      rgba(248,81,73,.12);
+      --purple:      #a78bfa;
+      --purple-bg:   rgba(167,139,250,.12);
+      --radius:      6px;
+      --ease:        150ms ease;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Roboto', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── App bar ─────────────────────────────────────── */
+    .app-bar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .app-bar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 17px;
+      font-weight: 500;
+    }
+
+    .app-bar-brand svg { flex-shrink: 0; }
+
+    .app-bar-spacer { flex: 1; }
+
+    .version-tag {
+      font-size: 11px;
+      font-family: 'Roboto Mono', monospace;
+      color: var(--text-muted);
+      background: var(--surface-hi);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+    }
+
+    /* ── Buttons ─────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 18px;
+      border-radius: 20px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      transition: filter var(--ease), opacity var(--ease);
+      line-height: 1;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #0d1117;
+    }
+
+    .btn-primary:hover { filter: brightness(1.12); }
+
+    .btn-primary:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+      filter: none;
+    }
+
+    .btn svg { flex-shrink: 0; }
+
+    /* ── Status chip ─────────────────────────────────── */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .chip-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .chip.idle   { background: var(--green-bg);   color: var(--green); }
+    .chip.scanning { background: var(--primary-bg); color: var(--primary); }
+    .chip.scanning .chip-dot { animation: blink 1.2s ease-in-out infinite; }
+
+    @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+
+    /* ── Layout ──────────────────────────────────────── */
+    .page { max-width: 1600px; margin: 0 auto; padding: 24px; }
+
+    /* ── Stat cards ──────────────────────────────────── */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 14px; margin-bottom: 22px; }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 30px;
+      font-weight: 300;
+    }
+
+    .stat-value.c-yellow { color: var(--yellow); }
+    .stat-value.c-green  { color: var(--green);  }
+
+    /* ── Table card ──────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    /* ── Toolbar inside card ─────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--surface-hi);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .scan-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .toolbar-spacer { flex: 1; }
+
+    .search {
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 5px 14px 5px 34px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      width: 240px;
+      outline: none;
+      transition: border-color var(--ease);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 96 960 960' fill='%238b949e'%3E%3Cpath d='M796 935 533 672q-30 26-70 40.5T378 727q-108 0-183-75T120 469q0-109 75-184t184-75q108 0 183 75t75 184q0 41-14.5 80.5T577 621l263 263-44 51Zm-418-270q79 0 134-55.5T568 475q0-79-55-134.5T379 285q-79 0-134 55.5T190 475q0 79 55 134.5T378 665Z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: 11px center;
+    }
+
+    .search:focus { border-color: var(--primary); }
+    .search::placeholder { color: var(--text-muted); }
+
+    .filter-sel {
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 10px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    /* ── Data table ──────────────────────────────────── */
+    .tbl-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      background: var(--surface-hi);
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    thead th:hover { color: var(--text); }
+
+    thead th .sort { margin-left: 3px; opacity: .4; font-size: 10px; }
+    thead th.asc  .sort::after { content: '▲'; }
+    thead th.desc .sort::after { content: '▼'; }
+    thead th:not(.asc):not(.desc) .sort::after { content: '⇅'; }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border-hi);
+      transition: background var(--ease);
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface-alt); }
+
+    tbody tr.has-update { border-left: 3px solid var(--yellow); }
+    tbody tr.up-to-date { border-left: 3px solid transparent; }
+
+    tbody td {
+      padding: 10px 14px;
+      vertical-align: middle;
+    }
+
+    td.mono { font-family: 'Roboto Mono', monospace; font-size: 12px; }
+
+    /* ── Badges ──────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .badge-helm   { background: var(--primary-bg); color: var(--primary); }
+    .badge-fluxcd { background: var(--purple-bg);  color: var(--purple);  }
+    .badge-https  { background: var(--green-bg);   color: var(--green);   }
+    .badge-oci    { background: var(--yellow-bg);  color: var(--yellow);  }
+
+    /* ── Version cells ───────────────────────────────── */
+    .v-current { color: var(--text-muted); }
+    .v-latest  { color: var(--green); font-weight: 500; }
+    .v-update  { color: var(--yellow); font-weight: 500; }
+    .v-na      { color: var(--text-muted); opacity: .4; }
+
+    /* ── Empty / loading states ──────────────────────── */
+    .empty {
+      padding: 72px 16px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .empty-icon {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 16px;
+      opacity: .35;
+    }
+
+    .empty-title {
+      font-size: 18px;
+      font-weight: 400;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    /* ── Skeleton ────────────────────────────────────── */
+    .skel {
+      background: linear-gradient(90deg, var(--surface-alt) 25%, var(--surface-hi) 50%, var(--surface-alt) 75%);
+      background-size: 200% 100%;
+      animation: skel 1.5s infinite;
+      border-radius: 3px;
+      height: 13px;
+      display: inline-block;
+    }
+
+    @keyframes skel { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+
+    /* ── Toasts ──────────────────────────────────────── */
+    #toasts {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 100;
+    }
+
+    .toast {
+      background: var(--surface-hi);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 11px 16px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: slide-in .2s ease;
+      max-width: 360px;
+    }
+
+    .toast.ok  { border-left: 3px solid var(--green); }
+    .toast.err { border-left: 3px solid var(--red); }
+
+    @keyframes slide-in { from { transform: translateX(110%); opacity: 0 } to { transform: none; opacity: 1 } }
+
+    /* ── Scrollbar ───────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--surface); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+<!-- ── App bar ────────────────────────────────────────── -->
+<header class="app-bar">
+  <div class="app-bar-brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="#58a6ff" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M2 17l10 5 10-5" stroke="#58a6ff" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M2 12l10 5 10-5" stroke="#58a6ff" stroke-width="1.5" stroke-linejoin="round"/>
+    </svg>
+    Helm Update Checker
+  </div>
+  <div class="app-bar-spacer"></div>
+  <span id="status-chip" class="chip idle">
+    <span class="chip-dot"></span>
+    <span id="status-text">Ready</span>
+  </span>
+  <span id="ver-tag" class="version-tag">v0.0.0</span>
+  <button id="scan-btn" class="btn btn-primary" onclick="triggerScan()">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+    </svg>
+    Scan
+  </button>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────── -->
+<main class="page">
+
+  <!-- Stat cards -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Total charts</div>
+      <div class="stat-value" id="s-total">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Updates available</div>
+      <div class="stat-value c-yellow" id="s-updates">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Up to date</div>
+      <div class="stat-value c-green" id="s-ok">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Sources</div>
+      <div class="stat-value" id="s-sources">—</div>
+    </div>
+  </div>
+
+  <!-- Table card -->
+  <div class="card">
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <span class="scan-meta">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span id="last-scan">Not yet scanned</span>
+      </span>
+      <span class="toolbar-spacer"></span>
+      <input class="search" type="text" id="q" placeholder="Filter…" oninput="render()">
+      <select class="filter-sel" id="f-type" onchange="render()">
+        <option value="">All types</option>
+        <option value="helm">Helm</option>
+        <option value="fluxcd">FluxCD</option>
+      </select>
+      <select class="filter-sel" id="f-upd" onchange="render()">
+        <option value="">All</option>
+        <option value="1">Updates available</option>
+        <option value="0">Up to date</option>
+      </select>
+    </div>
+
+    <!-- Table -->
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr id="thead-row">
+            <th data-col="source">Source<span class="sort"></span></th>
+            <th data-col="chart">Chart<span class="sort"></span></th>
+            <th data-col="dependency">Dependency<span class="sort"></span></th>
+            <th data-col="type">Type<span class="sort"></span></th>
+            <th data-col="protocol">Protocol<span class="sort"></span></th>
+            <th data-col="current_version">Current<span class="sort"></span></th>
+            <th data-col="latest_version">Latest Stable<span class="sort"></span></th>
+            <th data-col="scope">Scope<span class="sort"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div id="toasts"></div>
+
+<script>
+'use strict';
+
+let allResults = [];
+let sortCol    = 'source';
+let sortAsc    = true;
+let pollTimer  = null;
+
+// ── Init ────────────────────────────────────────────────
+async function init() {
+  try {
+    const cfg = await apiFetch('/api/config');
+    document.getElementById('ver-tag').textContent = 'v' + (cfg.version || 'dev');
+  } catch (_) {}
+
+  try {
+    const st = await apiFetch('/api/status');
+    if (st.scanning) {
+      setScanning(true);
+      startPoll();
+    }
+    if (st.last_scan && st.last_scan !== '0001-01-01T00:00:00Z') {
+      setLastScan(st.last_scan);
+    }
+  } catch (_) {}
+
+  try {
+    allResults = await apiFetch('/api/results') || [];
+    updateStats();
+    render();
+  } catch (_) {}
+}
+
+// ── Scan ────────────────────────────────────────────────
+async function triggerScan() {
+  document.getElementById('scan-btn').disabled = true;
+  setScanning(true);
+  try {
+    await apiFetch('/api/scan', 'POST');
+    toast('Scan started', 'ok');
+    startPoll();
+  } catch (e) {
+    toast('Failed to start scan', 'err');
+    setScanning(false);
+    document.getElementById('scan-btn').disabled = false;
+  }
+}
+
+function startPoll() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    try {
+      const st = await apiFetch('/api/status');
+      if (!st.scanning) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        setScanning(false);
+        document.getElementById('scan-btn').disabled = false;
+        setLastScan(st.last_scan);
+        allResults = await apiFetch('/api/results') || [];
+        updateStats();
+        render();
+        toast('Scan complete — ' + st.count + ' results', 'ok');
+      }
+    } catch (_) {}
+  }, 2500);
+}
+
+// ── UI helpers ───────────────────────────────────────────
+function setScanning(on) {
+  const chip = document.getElementById('status-chip');
+  const txt  = document.getElementById('status-text');
+  chip.className = 'chip ' + (on ? 'scanning' : 'idle');
+  txt.textContent = on ? 'Scanning…' : 'Ready';
+}
+
+function setLastScan(iso) {
+  if (!iso || iso === '0001-01-01T00:00:00Z') return;
+  document.getElementById('last-scan').textContent =
+    'Last scan: ' + new Date(iso).toLocaleString();
+}
+
+function updateStats() {
+  const total   = allResults.length;
+  const updates = allResults.filter(r => r.update_available).length;
+  document.getElementById('s-total').textContent   = total   || '—';
+  document.getElementById('s-updates').textContent = updates || '—';
+  document.getElementById('s-ok').textContent      = (total - updates) || '—';
+  document.getElementById('s-sources').textContent =
+    new Set(allResults.map(r => r.source)).size || '—';
+}
+
+// ── Sort ─────────────────────────────────────────────────
+document.getElementById('thead-row').addEventListener('click', e => {
+  const th = e.target.closest('th[data-col]');
+  if (!th) return;
+  const col = th.dataset.col;
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+  document.querySelectorAll('thead th').forEach(h => h.classList.remove('asc', 'desc'));
+  th.classList.add(sortAsc ? 'asc' : 'desc');
+  render();
+});
+
+// ── Render ───────────────────────────────────────────────
+function render() {
+  const q   = document.getElementById('q').value.toLowerCase();
+  const ft  = document.getElementById('f-type').value;
+  const fu  = document.getElementById('f-upd').value;
+
+  let rows = allResults.filter(r => {
+    if (ft && r.type !== ft) return false;
+    if (fu === '1' && !r.update_available) return false;
+    if (fu === '0' &&  r.update_available) return false;
+    if (q) {
+      const blob = [r.source, r.chart, r.dependency, r.type, r.protocol,
+                    r.current_version, r.latest_version, r.scope].join(' ').toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    const av = String(a[sortCol] ?? '').toLowerCase();
+    const bv = String(b[sortCol] ?? '').toLowerCase();
+    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+
+  const tbody = document.getElementById('tbody');
+
+  if (rows.length === 0) {
+    const msg = allResults.length === 0
+      ? ['search', 'No results yet', 'Click <strong>Scan</strong> to check for helm chart updates']
+      : ['filter_list_off', 'No matching results', 'Try adjusting your filters'];
+    tbody.innerHTML = `<tr><td colspan="8">
+      <div class="empty">
+        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          ${msg[0] === 'search'
+            ? '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'
+            : '<line x1="3" y1="6" x2="21" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/>'}
+        </svg>
+        <div class="empty-title">${msg[1]}</div>
+        <div>${msg[2]}</div>
+      </div>
+    </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const upd    = r.update_available;
+    const latest = r.latest_version
+      ? `<span class="${upd ? 'v-update' : 'v-latest'}">${esc(r.latest_version)}</span>`
+      : `<span class="v-na">—</span>`;
+
+    return `<tr class="${upd ? 'has-update' : 'up-to-date'}">
+      <td>${esc(r.source)}</td>
+      <td>${esc(r.chart)}</td>
+      <td class="mono">${esc(r.dependency)}</td>
+      <td><span class="badge badge-${r.type}">${esc(r.type)}</span></td>
+      <td><span class="badge badge-${r.protocol}">${esc(r.protocol)}</span></td>
+      <td class="mono v-current">${esc(r.current_version)}</td>
+      <td class="mono">${latest}</td>
+      <td>${esc(r.scope)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Toast ────────────────────────────────────────────────
+function toast(msg, type) {
+  const el = Object.assign(document.createElement('div'), {
+    className: 'toast ' + type,
+    textContent: msg,
+  });
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ── Util ─────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function apiFetch(url, method) {
+  const res = await fetch(url, method ? { method } : undefined);
+  if (!res.ok) throw new Error(res.status);
+  return res.json();
+}
+
+init();
+</script>
+</body>
+</html>

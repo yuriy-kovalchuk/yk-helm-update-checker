@@ -1,115 +1,136 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
-	"path/filepath"
-	"sync"
-	"yk-update-checker/internal/github"
-	"yk-update-checker/internal/helm"
-	"yk-update-checker/internal/models"
-	"yk-update-checker/internal/server"
-	"yk-update-checker/internal/version"
+	"sort"
+	"text/tabwriter"
+
+	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/config"
+	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/extractor"
+	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/scan"
+	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/version"
+	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/web"
 )
 
 func main() {
-	repoURL := flag.String("repo", "", "GitHub repository URL to scan")
-	scanSubPath := flag.String("path", ".", "Path within the repository to scan for Helm charts")
-	tempDir := flag.String("temp-dir", "", "Temporary directory to clone the repository (defaults to a system temp dir)")
-	verbose := flag.Bool("verbose", false, "Enable verbose logging")
-	updateType := flag.String("update-type", "all", "Update type to check for: all, major, minor, patch")
-	webMode := flag.Bool("web", false, "Start in web server mode")
-	port := flag.String("port", "8080", "Port to run the web server on")
-	scanInterval := flag.Duration("scan-interval", 0, "Interval for background scans (e.g. 1h, 30m). Only works in web mode with -repo specified")
+	cfgPath   := flag.String("config",  "config.yaml", "path to config file")
+	scopeFlag := flag.String("scope",   "",            "update scope: all, major, minor, patch (overrides config)")
+	webMode   := flag.Bool("web",       false,         "start web server instead of CLI scan")
+	port      := flag.String("port",    "8080",        "web server port")
+	verbose   := flag.Bool("verbose",   false,         "enable debug logging")
 	flag.Parse()
 
 	level := slog.LevelInfo
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
-	slog.SetDefault(logger)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 
-	slog.Info("Starting YK-UPDATE-CHECKER", "version", version.Version, "commit", version.Commit, "build_date", version.BuildDate)
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		fatal("load config: %v", err)
+	}
+
+	// --scope overrides the config file value; both fall back to "all".
+	scope := cfg.UpdateType
+	if *scopeFlag != "" {
+		scope = *scopeFlag
+	}
 
 	if *webMode {
-		srv := server.New(server.Config{
-			Port:         *port,
-			DefaultRepo:  *repoURL,
-			SubPath:      *scanSubPath,
-			UpdateType:   *updateType,
-			ScanInterval: *scanInterval,
-		})
-		if err := srv.Start(); err != nil {
-			slog.Error("Server failed", "error", err)
-			os.Exit(1)
-		}
+		startWeb(cfg, scope, *port)
 		return
 	}
 
-	if *repoURL == "" {
-		fmt.Println("Error: -repo flag is required in CLI mode")
-		flag.Usage()
-		os.Exit(1)
+	if len(cfg.Repos) == 0 {
+		fatal("no repositories configured in %s", *cfgPath)
+	}
+	if err := runCLI(cfg, scope); err != nil {
+		fatal("%v", err)
+	}
+}
+
+func runCLI(cfg *config.Config, scopeStr string) error {
+	sc := version.ParseScope(scopeStr)
+
+	newExtractors := func() []extractor.Extractor {
+		return []extractor.Extractor{extractor.NewHelmChart(), extractor.NewFluxCD()}
 	}
 
-	ut := helm.UpdateType(*updateType)
-	switch ut {
-	case helm.UpdateAll, helm.UpdateMajor, helm.UpdateMinor, helm.UpdatePatch:
-		// Valid
-	default:
-		fmt.Printf("Error: invalid update-type '%s'. Valid types: all, major, minor, patch\n", *updateType)
-		os.Exit(1)
+	repos := make([]scan.RepoTarget, len(cfg.Repos))
+	for i, r := range cfg.Repos {
+		repos[i] = scan.RepoTarget{Name: r.Name, URL: r.URL, Path: r.Path}
 	}
 
-	workDir := *tempDir
-	if workDir == "" {
-		var err error
-		workDir, err = os.MkdirTemp("", "yk-update-checker-*")
-		if err != nil {
-			slog.Error("Failed to create temp directory", "error", err)
-			os.Exit(1)
-		}
-		defer os.RemoveAll(workDir)
-	}
-
-	slog.Info("Downloading repository", "url", *repoURL, "target", workDir)
-	if err := github.DownloadRepo(*repoURL, workDir); err != nil {
-		slog.Error("Failed to download repository", "error", err)
-		os.Exit(1)
-	}
-
-	searchPath := filepath.Join(workDir, *scanSubPath)
-	slog.Info("Scanning for Helm charts", "path", searchPath)
-	chartPaths, err := helm.FindCharts(searchPath)
+	runner := scan.NewRunner(repos, newExtractors, sc)
+	slog.Info("starting scan", "repos", len(repos), "scope", sc)
+	results, err := runner.Run(context.Background())
 	if err != nil {
-		slog.Error("Failed to find charts", "error", err)
-		os.Exit(1)
+		return err
+	}
+	slog.Info("scan complete", "results", len(results))
+
+	writeTable(os.Stdout, results)
+	return nil
+}
+
+func writeTable(w io.Writer, results []scan.Result) {
+	if len(results) == 0 {
+		fmt.Fprintln(w, "No results found.")
+		return
 	}
 
-	slog.Info("Found charts", "count", len(chartPaths))
-
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10) // Limit concurrency
-
-	for _, path := range chartPaths {
-		chart, err := helm.ParseChart(path)
-		if err != nil {
-			slog.Error("Failed to parse chart", "path", path, "error", err)
-			continue
+	sorted := make([]scan.Result, len(results))
+	copy(sorted, results)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Source != sorted[j].Source {
+			return sorted[i].Source < sorted[j].Source
 		}
+		if sorted[i].Chart != sorted[j].Chart {
+			return sorted[i].Chart < sorted[j].Chart
+		}
+		return sorted[i].Dependency < sorted[j].Dependency
+	})
 
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(c *models.Chart) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			helm.CheckUpdates(c, ut)
-		}(chart)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SOURCE\tCHART\tDEPENDENCY\tTYPE\tPROTOCOL\tCURRENT\tLATEST STABLE\tSCOPE")
+	fmt.Fprintln(tw, "------\t-----\t----------\t----\t--------\t-------\t-------------\t-----")
+	for _, r := range sorted {
+		latest := r.LatestVersion
+		if latest == "" {
+			latest = "-"
+		}
+		marker := " "
+		if r.UpdateAvailable {
+			marker = "*"
+		}
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			marker, r.Source, r.Chart, r.Dependency, r.Type,
+			r.Protocol, r.CurrentVersion, latest, r.Scope,
+		)
 	}
+	tw.Flush()
+}
 
-	wg.Wait()
-	slog.Info("Update check completed")
+func startWeb(cfg *config.Config, scope, port string) {
+	h := web.NewHandler(cfg, scope)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	addr := ":" + port
+	slog.Info("web server started", "addr", "http://localhost"+addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		fatal("server: %v", err)
+	}
+}
+
+func fatal(msg string, args ...any) {
+	fmt.Fprintf(os.Stderr, "error: %s\n", fmt.Sprintf(msg, args...))
+	os.Exit(1)
 }
