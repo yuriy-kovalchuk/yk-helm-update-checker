@@ -37,12 +37,13 @@ type Result struct {
 // extractors (e.g. FluxCD) receive a fresh instance for each repo and
 // concurrent ScanDir calls never share mutable extractor state.
 type Scanner struct {
-	newExtractors func() []extractor.Extractor
-	scope         version.Scope
+	newExtractors  func() []extractor.Extractor
+	scope          version.Scope
+	parallelChecks int
 }
 
-func NewScanner(newExtractors func() []extractor.Extractor, scope version.Scope) *Scanner {
-	return &Scanner{newExtractors: newExtractors, scope: scope}
+func NewScanner(newExtractors func() []extractor.Extractor, scope version.Scope, parallelChecks int) *Scanner {
+	return &Scanner{newExtractors: newExtractors, scope: scope, parallelChecks: parallelChecks}
 }
 
 // pendingCheck holds everything needed to perform one version lookup.
@@ -54,43 +55,51 @@ type pendingCheck struct {
 }
 
 // ScanDir walks root and returns one Result per chart dependency found.
-// It performs a pre-pass to read all YAML files into memory so that
-// Contextual extractors (e.g. FluxCD) can resolve cross-file references
-// before the main extraction loop runs.
+// It performs two streaming passes over the YAML files so that no more than
+// one file's content is held in memory at a time.
 // Cancelling ctx aborts in-flight version checks.
 func (s *Scanner) ScanDir(ctx context.Context, source, root string) []Result {
 	extractors := s.newExtractors()
 
-	// ── Pre-pass: read every YAML file once ──────────────────────────────
-	allFiles := make(map[string][]byte)
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	// walkYAML calls fn for each .yaml/.yml file under root, one at a time.
+	walkYAML := func(fn func(path string, content []byte)) {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext != ".yaml" && ext != ".yml" {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			fn(path, content)
 			return nil
-		}
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".yaml" && ext != ".yml" {
-			return nil
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		allFiles[path] = content
-		return nil
-	})
+		})
+	}
 
-	// ── Prepare contextual extractors ─────────────────────────────────────
+	// ── Pre-pass: stream each file through contextual extractors ──────────
+	var contextuals []extractor.Contextual
 	for _, ex := range extractors {
 		if c, ok := ex.(extractor.Contextual); ok {
-			if err := c.Prepare(allFiles); err != nil {
-				slog.Warn("extractor prepare failed", "type", ex.Type(), "error", err)
-			}
+			contextuals = append(contextuals, c)
 		}
+	}
+	if len(contextuals) > 0 {
+		walkYAML(func(path string, content []byte) {
+			for _, c := range contextuals {
+				if err := c.PrepareFile(path, content); err != nil {
+					slog.Warn("extractor prepare failed", "type", c.Type(), "file", path, "error", err)
+				}
+			}
+		})
 	}
 
 	// ── Extract all chart refs (sequential; YAML parsing only) ────────────
 	var pending []pendingCheck
-	for path, content := range allFiles {
+	walkYAML(func(path string, content []byte) {
 		for _, ex := range extractors {
 			if !ex.Match(path, content) {
 				continue
@@ -104,14 +113,14 @@ func (s *Scanner) ScanDir(ctx context.Context, source, root string) []Result {
 				pending = append(pending, pendingCheck{source: source, chart: chartName, exType: ex.Type(), ref: ref})
 			}
 		}
-	}
+	})
 
 	// ── Check versions concurrently (network I/O) ─────────────────────────
 	var (
 		results []Result
 		mu      sync.Mutex
 	)
-	runConcurrent(ctx, pending, 20, func(ctx context.Context, p pendingCheck) {
+	runConcurrent(ctx, pending, s.parallelChecks, func(ctx context.Context, p pendingCheck) {
 		latest, err := version.Latest(ctx, p.ref.Protocol, p.ref.Repository, p.ref.Name, p.ref.CurrentVersion, s.scope)
 		if err != nil {
 			slog.Debug("version check failed", "dep", p.ref.Name, "error", err)
