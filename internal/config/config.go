@@ -13,10 +13,24 @@ var (
 	BuildDate = "unknown"
 )
 
+// RepoAuth holds credentials for a single repository.
+// Type selects the mechanism: "token", "basic", or "ssh".
+// File variants (TokenFile, PasswordFile) point to files mounted from Secrets.
+type RepoAuth struct {
+	Type         string `yaml:"type"`
+	Token        string `yaml:"token"`
+	TokenFile    string `yaml:"token_file"`
+	Username     string `yaml:"username"`
+	Password     string `yaml:"password"`
+	PasswordFile string `yaml:"password_file"`
+	SSHKeyPath   string `yaml:"ssh_key_path"`
+}
+
 type Repo struct {
-	Name string `yaml:"name"`
-	URL  string `yaml:"repo"`
-	Path string `yaml:"path"`
+	Name string   `yaml:"name"`
+	URL  string   `yaml:"repo"`
+	Path string   `yaml:"path"`
+	Auth RepoAuth `yaml:"auth"`
 }
 
 type Config struct {

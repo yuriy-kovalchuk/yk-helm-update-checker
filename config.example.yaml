@@ -13,10 +13,29 @@ update_type: all
 parallel_checks: 5
 
 repos:
+  # Public repository — no auth required
   - name: homelab
     repo: https://github.com/example/my-gitops-repo
-    path: kubernetes/apps # optional: scan only this sub-path
+    path: kubernetes/apps          # optional: scan only this sub-path
 
-  - name: flux-cluster
-    repo: https://github.com/example/flux-cluster
-    path: clusters/production/fluxcd
+  # Private repository — HTTPS token (GitHub/GitLab/Gitea personal access token)
+  - name: private-helmfile
+    repo: https://github.com/example/private-repo
+    auth:
+      type: token
+      token: ghp_xxxxxxxxxxxxxxxxxxxx
+
+  # Private repository — HTTPS basic auth
+  - name: gitea-private
+    repo: https://gitea.example.com/org/repo
+    auth:
+      type: basic
+      username: myuser
+      password: mypassword
+
+  # Private repository — SSH key
+  - name: ssh-repo
+    repo: git@github.com:example/private-repo.git
+    auth:
+      type: ssh
+      ssh_key_path: /etc/yk-update-checker/ssh/id_rsa

@@ -60,3 +60,23 @@ Name of the ServiceAccount to use.
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Extract "{org}/{repo}" from a git URL for use in secret mount paths.
+Handles both HTTPS (https://host/org/repo) and SSH (git@host:org/repo.git) formats.
+*/}}
+{{- define "yk-update-checker.repoOrgPath" -}}
+{{- $url := . -}}
+{{- if hasPrefix "http" $url -}}
+  {{- regexReplaceAll "^https?://[^/]+/" $url "" | trimSuffix ".git" -}}
+{{- else -}}
+  {{- regexReplaceAll "^[^:]+:" $url "" | trimSuffix ".git" -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Safe volume name derived from a repo name: lowercase, non-alphanumeric replaced with "-".
+*/}}
+{{- define "yk-update-checker.secretVolumeName" -}}
+{{- printf "secret-%s" (. | lower | regexReplaceAll "[^a-z0-9]" "-") -}}
+{{- end }}

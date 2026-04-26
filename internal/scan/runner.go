@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,11 +16,77 @@ import (
 	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/version"
 )
 
-// RepoTarget is a repository to scan with an optional sub-path.
+// RepoAuth holds credentials for a repository.
+// Type selects the mechanism: "token", "basic", or "ssh".
+// File variants (TokenFile, PasswordFile) point to files mounted from Secrets.
+type RepoAuth struct {
+	Type         string
+	Token        string
+	TokenFile    string
+	Username     string
+	Password     string
+	PasswordFile string
+	SSHKeyPath   string
+}
+
+// RepoTarget is a repository to scan with an optional sub-path and auth.
 type RepoTarget struct {
 	Name string
 	URL  string
 	Path string
+	Auth RepoAuth
+}
+
+// cloneURL returns the repository URL with credentials embedded for HTTPS
+// clones. SSH URLs are returned unchanged (auth handled via GIT_SSH_COMMAND).
+// When inline values are absent, credentials are read from the file paths
+// set by TokenFile / PasswordFile (mounted from Kubernetes Secrets).
+func (rt RepoTarget) cloneURL() string {
+	u, err := url.Parse(rt.URL)
+	if err != nil || u.Scheme == "" {
+		return rt.URL
+	}
+	switch rt.Auth.Type {
+	case "token":
+		tok := rt.Auth.Token
+		if tok == "" && rt.Auth.TokenFile != "" {
+			tok = readCredFile(rt.Auth.TokenFile)
+		}
+		if tok != "" {
+			u.User = url.UserPassword("git", tok)
+		}
+	case "basic":
+		pass := rt.Auth.Password
+		if pass == "" && rt.Auth.PasswordFile != "" {
+			pass = readCredFile(rt.Auth.PasswordFile)
+		}
+		if pass != "" {
+			u.User = url.UserPassword(rt.Auth.Username, pass)
+		}
+	}
+	return u.String()
+}
+
+func readCredFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.Warn("credential file unreadable", "path", path, "error", err)
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// authEnv returns the environment for git commands. It always sets
+// GIT_TERMINAL_PROMPT=0 so git fails fast instead of hanging on missing
+// credentials. SSH key auth is injected via GIT_SSH_COMMAND.
+func (rt RepoTarget) authEnv() []string {
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if rt.Auth.Type == "ssh" && rt.Auth.SSHKeyPath != "" {
+		env = append(env,
+			"GIT_SSH_COMMAND=ssh -i "+rt.Auth.SSHKeyPath+" -o StrictHostKeyChecking=no -o BatchMode=yes",
+		)
+	}
+	return env
 }
 
 // Runner clones repositories and runs the Scanner on each one.
@@ -81,7 +148,7 @@ func (r *Runner) Run(ctx context.Context) ([]Result, error) {
 	runConcurrent(ctx, r.repos, 5, func(ctx context.Context, rt RepoTarget) {
 		dest := filepath.Join(workDir, safeName(rt.Name))
 		slog.Info("syncing repo", "name", rt.Name, "url", rt.URL)
-		if err := syncRepo(ctx, rt.URL, dest); err != nil {
+		if err := syncRepo(ctx, rt, dest); err != nil {
 			slog.Error("sync failed", "repo", rt.Name, "error", err)
 			return
 		}
@@ -104,26 +171,28 @@ func (r *Runner) Run(ctx context.Context) ([]Result, error) {
 
 // syncRepo clones the repo if it doesn't exist yet, or does a fast
 // fetch+reset if a clone is already present in dest.
-func syncRepo(ctx context.Context, url, dest string) error {
+func syncRepo(ctx context.Context, rt RepoTarget, dest string) error {
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
-		return fetchRepo(ctx, dest)
+		return fetchRepo(ctx, rt, dest)
 	}
-	return cloneRepo(ctx, url, dest)
+	return cloneRepo(ctx, rt, dest)
 }
 
-func cloneRepo(ctx context.Context, url, dest string) error {
+func cloneRepo(ctx context.Context, rt RepoTarget, dest string) error {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=1", "--single-branch", url, dest)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=1", "--single-branch", rt.cloneURL(), dest)
+	cmd.Env = rt.authEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func fetchRepo(ctx context.Context, dest string) error {
+func fetchRepo(ctx context.Context, rt RepoTarget, dest string) error {
 	fetch := exec.CommandContext(ctx, "git", "-C", dest, "fetch", "--depth=1", "origin")
+	fetch.Env = rt.authEnv()
 	if out, err := fetch.CombinedOutput(); err != nil {
 		return fmt.Errorf("git fetch: %w\n%s", err, strings.TrimSpace(string(out)))
 	}

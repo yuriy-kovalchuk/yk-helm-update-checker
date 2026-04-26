@@ -1,9 +1,0 @@
-repos:
-  - name: test-repo
-    repo: https://github.com/yuriy-kovalchuk/Homelab
-    path: kubernetes/apps
-  - name: flux-repo
-    repo: https://github.com/yuriy-kovalchuk/Homelab
-    path: management-cluster/fluxcd
-update_type: all
-parallel_checks: 5
