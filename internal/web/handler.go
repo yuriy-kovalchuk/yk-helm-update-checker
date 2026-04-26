@@ -41,7 +41,20 @@ type Handler struct {
 func NewHandler(cfg *config.Config, scopeStr string) *Handler {
 	repos := make([]scan.RepoTarget, len(cfg.Repos))
 	for i, r := range cfg.Repos {
-		repos[i] = scan.RepoTarget{Name: r.Name, URL: r.URL, Path: r.Path}
+		repos[i] = scan.RepoTarget{
+			Name: r.Name,
+			URL:  r.URL,
+			Path: r.Path,
+			Auth: scan.RepoAuth{
+				Type:         r.Auth.Type,
+				Token:        r.Auth.Token,
+				TokenFile:    r.Auth.TokenFile,
+				Username:     r.Auth.Username,
+				Password:     r.Auth.Password,
+				PasswordFile: r.Auth.PasswordFile,
+				SSHKeyPath:   r.Auth.SSHKeyPath,
+			},
+		}
 	}
 	return &Handler{
 		repos:          repos,

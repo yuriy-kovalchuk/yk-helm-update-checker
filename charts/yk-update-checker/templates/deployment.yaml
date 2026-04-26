@@ -72,20 +72,29 @@ spec:
             # overlay /tmp with an emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- range .Values.config.repos }}
+            {{- if .auth.existingSecret }}
+            - name: {{ include "yk-update-checker.secretVolumeName" .name }}
+              mountPath: /etc/yk-update-checker/secrets/{{ include "yk-update-checker.repoOrgPath" .repo }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
         - name: config
-          {{- if .Values.existingSecret }}
-          secret:
-            secretName: {{ .Values.existingSecret }}
-          {{- else }}
           configMap:
             name: {{ include "yk-update-checker.fullname" . }}
-          {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- range .Values.config.repos }}
+        {{- if .auth.existingSecret }}
+        - name: {{ include "yk-update-checker.secretVolumeName" .name }}
+          secret:
+            secretName: {{ .auth.existingSecret }}
+        {{- end }}
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

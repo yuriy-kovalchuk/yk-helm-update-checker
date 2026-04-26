@@ -1,4 +1,3 @@
-{{- if not .Values.existingSecret }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,8 +20,36 @@ data:
         {{- if .path }}
         path: {{ .path | quote }}
         {{- end }}
+        {{- if .auth }}
+        auth:
+          type: {{ .auth.type | quote }}
+          {{- if .auth.existingSecret }}
+          {{- $orgRepo := include "yk-update-checker.repoOrgPath" .repo }}
+          {{- $key := default "token" .auth.existingSecretKey }}
+          {{- if eq .auth.type "token" }}
+          token_file: {{ printf "/etc/yk-update-checker/secrets/%s/%s" $orgRepo $key | quote }}
+          {{- else if eq .auth.type "basic" }}
+          username: {{ .auth.username | quote }}
+          password_file: {{ printf "/etc/yk-update-checker/secrets/%s/%s" $orgRepo $key | quote }}
+          {{- else if eq .auth.type "ssh" }}
+          ssh_key_path: {{ printf "/etc/yk-update-checker/secrets/%s/%s" $orgRepo $key | quote }}
+          {{- end }}
+          {{- else }}
+          {{- if .auth.token }}
+          token: {{ .auth.token | quote }}
+          {{- end }}
+          {{- if .auth.username }}
+          username: {{ .auth.username | quote }}
+          {{- end }}
+          {{- if .auth.password }}
+          password: {{ .auth.password | quote }}
+          {{- end }}
+          {{- if .auth.sshKeyPath }}
+          ssh_key_path: {{ .auth.sshKeyPath | quote }}
+          {{- end }}
+          {{- end }}
+        {{- end }}
     {{- end }}
     {{- else }}
       []
     {{- end }}
-{{- end }}
