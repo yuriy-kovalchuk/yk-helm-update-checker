@@ -73,7 +73,7 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- range .Values.config.repos }}
-            {{- if .auth.existingSecret }}
+            {{- if and .auth .auth.existingSecret }}
             - name: {{ include "yk-update-checker.secretVolumeName" .name }}
               mountPath: /etc/yk-update-checker/secrets/{{ include "yk-update-checker.repoOrgPath" .repo }}
               readOnly: true
@@ -89,7 +89,7 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- range .Values.config.repos }}
-        {{- if .auth.existingSecret }}
+        {{- if and .auth .auth.existingSecret }}
         - name: {{ include "yk-update-checker.secretVolumeName" .name }}
           secret:
             secretName: {{ .auth.existingSecret }}

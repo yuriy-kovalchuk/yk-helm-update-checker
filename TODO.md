@@ -2,6 +2,7 @@
 
 ## High — production readiness
 
+- [ ] **Native chart version checking** — currently only `dependencies:` in Chart.yaml are checked; add support for checking the chart's own version against an upstream repository (e.g. check if local `nginx` v15.0.0 has updates in bitnami repo)
 - [ ] **Unit tests** — no tests exist for any package; start with `extractor/`, `version/engine.go`, and `scan/scanner.go`
 - [ ] **Private OCI registry auth** — relies on `authn.DefaultKeychain`; add explicit token/basic-auth option in config
 - [ ] **Scheduled scans** — add a `scan_interval` config option (e.g. `6h`) to re-scan automatically without external tooling

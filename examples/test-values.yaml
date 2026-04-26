@@ -1,0 +1,22 @@
+# Test values for yk-update-checker
+# Copy this file and customize for your testing
+
+image:
+  pullPolicy: Always
+
+verbose: true
+
+config:
+  updateType: all
+  parallelChecks: 5
+
+  repos:
+    - name: flux-repo
+      repo: https://github.com/yuriy-kovalchuk/Homelab
+      path: management-cluster/fluxcd
+    - name: test-private-repo
+      repo: https://github.com/yuriy-kovalchuk/test
+      auth:
+        type: token
+        existingSecret: github-token
+        existingSecretKey: token
