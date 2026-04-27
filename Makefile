@@ -1,7 +1,6 @@
-.PHONY: build run lint fmt vet tidy test test-cover docker-build docker-push clean help
+.PHONY: build run run-api run-scanner run-dashboard lint fmt vet tidy test test-cover docker-build docker-push clean help
 
-BINARY     := bin/yk-update-checker
-IMAGE      ?= ghcr.io/yuriy-kovalchuk/yk-helm-update-checker
+IMAGE      ?= ghcr.io/yuriy-kovalchuk
 VERSION    ?= dev
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE       := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -13,14 +12,24 @@ LDFLAGS := -ldflags "-s -w \
   -X $(PKG).Commit=$(COMMIT) \
   -X $(PKG).BuildDate=$(DATE)"
 
-## build: compile the binary for the current platform
+## build: compile all binaries for the current platform
 build:
 	mkdir -p bin
-	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o $(BINARY) ./cmd/yk-update-checker
+	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/update-checker-api ./cmd/update-checker-api
+	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/update-checker-scanner ./cmd/update-checker-scanner
+	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/update-checker-dashboard ./cmd/update-checker-dashboard
 
-## run: build and run the web server using config.yaml
-run: build
-	$(BINARY) -web -config config.yaml
+## run-api: run the API server
+run-api: build
+	./bin/update-checker-api -db /tmp/update-checker.db
+
+## run-scanner: run the scanner (requires API to be running)
+run-scanner: build
+	./bin/update-checker-scanner -api-url http://localhost:8080 -config config.yaml
+
+## run-dashboard: run the dashboard (requires API to be running)
+run-dashboard: build
+	./bin/update-checker-dashboard -api-url http://localhost:8080
 
 ## lint: run golangci-lint
 lint:
@@ -49,28 +58,17 @@ test-cover:
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-## docker-build: build multi-arch Docker image (requires buildx)
+## docker-build: build all Docker images
 docker-build:
-	docker buildx build \
-		--platform $(PLATFORMS) \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT=$(COMMIT) \
-		--build-arg BUILD_DATE=$(DATE) \
-		-t $(IMAGE):$(VERSION) \
-		-t $(IMAGE):latest \
-		.
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(DATE) -t $(IMAGE)/update-checker-api:$(VERSION) -t $(IMAGE)/update-checker-api:latest -f Dockerfile.api .
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(DATE) -t $(IMAGE)/update-checker-scanner:$(VERSION) -t $(IMAGE)/update-checker-scanner:latest -f Dockerfile.scanner .
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(DATE) -t $(IMAGE)/update-checker-dashboard:$(VERSION) -t $(IMAGE)/update-checker-dashboard:latest -f Dockerfile.dashboard .
 
-## docker-push: build and push multi-arch Docker image
+## docker-push: build and push all Docker images
 docker-push:
-	docker buildx build \
-		--platform $(PLATFORMS) \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT=$(COMMIT) \
-		--build-arg BUILD_DATE=$(DATE) \
-		-t $(IMAGE):$(VERSION) \
-		-t $(IMAGE):latest \
-		--push \
-		.
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(DATE) -t $(IMAGE)/update-checker-api:$(VERSION) -t $(IMAGE)/update-checker-api:latest -f Dockerfile.api . --push
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(DATE) -t $(IMAGE)/update-checker-scanner:$(VERSION) -t $(IMAGE)/update-checker-scanner:latest -f Dockerfile.scanner . --push
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(DATE) -t $(IMAGE)/update-checker-dashboard:$(VERSION) -t $(IMAGE)/update-checker-dashboard:latest -f Dockerfile.dashboard . --push
 
 ## clean: remove build artefacts and coverage reports
 clean:

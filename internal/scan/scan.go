@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
@@ -10,11 +11,36 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/extractor"
 	"github.com/yuriy-kovalchuk/yk-helm-update-checker/internal/version"
 )
+
+// ============================================================================
+// Result
+// ============================================================================
+
+// Result is one dependency check outcome, matching the UI columns:
+// SOURCE | CHART | DEPENDENCY | TYPE | PROTOCOL | CURRENT | LATEST STABLE | SCOPE
+type Result struct {
+	Source          string    `json:"source"`
+	Chart           string    `json:"chart"`
+	Dependency      string    `json:"dependency"`
+	Type            string    `json:"type"`
+	Protocol        string    `json:"protocol"`
+	CurrentVersion  string    `json:"current_version"`
+	LatestVersion   string    `json:"latest_version"`
+	Scope           string    `json:"scope"`
+	UpdateAvailable bool      `json:"update_available"`
+	CheckedAt       time.Time `json:"checked_at"`
+}
+
+// ============================================================================
+// RepoTarget and Authentication
+// ============================================================================
 
 // RepoAuth holds credentials for a repository.
 // Type selects the mechanism: "token", "basic", or "ssh".
@@ -39,8 +65,6 @@ type RepoTarget struct {
 
 // cloneURL returns the repository URL with credentials embedded for HTTPS
 // clones. SSH URLs are returned unchanged (auth handled via GIT_SSH_COMMAND).
-// When inline values are absent, credentials are read from the file paths
-// set by TokenFile / PasswordFile (mounted from Kubernetes Secrets).
 func (rt RepoTarget) cloneURL() string {
 	u, err := url.Parse(rt.URL)
 	if err != nil || u.Scheme == "" {
@@ -89,7 +113,11 @@ func (rt RepoTarget) authEnv() []string {
 	return env
 }
 
-// Runner clones repositories and runs the Scanner on each one.
+// ============================================================================
+// Runner
+// ============================================================================
+
+// Runner clones repositories and scans them for chart dependencies.
 type Runner struct {
 	repos          []RepoTarget
 	newExtractors  func() []extractor.Extractor
@@ -112,42 +140,26 @@ func NewRunner(repos []RepoTarget, newExtractors func() []extractor.Extractor, s
 }
 
 // Run syncs all repos, scans them, and returns the aggregated results.
-// When gitCacheDir is empty a temporary directory is used and removed on
-// return; when set the clones are kept there and subsequent runs do a fast
-// fetch+reset instead of a full clone.
-// Cancelling ctx aborts in-flight clones and version checks.
 func (r *Runner) Run(ctx context.Context) ([]Result, error) {
-	var (
-		workDir string
-		cleanup bool
-	)
-	if r.gitCacheDir != "" {
-		if err := os.MkdirAll(r.gitCacheDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create git cache dir: %w", err)
-		}
-		workDir = r.gitCacheDir
-	} else {
-		dir, err := os.MkdirTemp("", "yk-scan-*")
-		if err != nil {
-			return nil, err
-		}
-		workDir = dir
-		cleanup = true
+	workDir, cleanup, err := r.setupWorkspace()
+	if err != nil {
+		return nil, err
 	}
 	if cleanup {
 		defer os.RemoveAll(workDir)
 	}
 
 	cache := version.NewIndexCache()
-	scanner := NewScanner(r.newExtractors, r.scope, r.parallelChecks, cache)
 
 	var (
 		results []Result
 		mu      sync.Mutex
 	)
+
 	runConcurrent(ctx, r.repos, 5, func(ctx context.Context, rt RepoTarget) {
 		dest := filepath.Join(workDir, safeName(rt.Name))
 		slog.Info("syncing repo", "name", rt.Name, "url", rt.URL)
+
 		if err := syncRepo(ctx, rt, dest); err != nil {
 			slog.Error("sync failed", "repo", rt.Name, "error", err)
 			return
@@ -158,7 +170,7 @@ func (r *Runner) Run(ctx context.Context) ([]Result, error) {
 			scanPath = filepath.Join(dest, rt.Path)
 		}
 
-		repoResults := scanner.ScanDir(ctx, rt.Name, scanPath)
+		repoResults := r.scanDir(ctx, rt.Name, scanPath, cache)
 		slog.Info("scan done", "repo", rt.Name, "results", len(repoResults))
 
 		mu.Lock()
@@ -169,8 +181,139 @@ func (r *Runner) Run(ctx context.Context) ([]Result, error) {
 	return results, nil
 }
 
-// syncRepo clones the repo if it doesn't exist yet, or does a fast
-// fetch+reset if a clone is already present in dest.
+func (r *Runner) setupWorkspace() (workDir string, cleanup bool, err error) {
+	if r.gitCacheDir != "" {
+		if err := os.MkdirAll(r.gitCacheDir, 0o755); err != nil {
+			return "", false, fmt.Errorf("create git cache dir: %w", err)
+		}
+		return r.gitCacheDir, false, nil
+	}
+	dir, err := os.MkdirTemp("", "yk-scan-*")
+	if err != nil {
+		return "", false, err
+	}
+	return dir, true, nil
+}
+
+// ============================================================================
+// Directory Scanning
+// ============================================================================
+
+// pendingCheck holds everything needed to perform one version lookup.
+type pendingCheck struct {
+	source string
+	chart  string
+	exType string
+	ref    extractor.ChartRef
+}
+
+// scanDir walks root and returns one Result per chart dependency found.
+func (r *Runner) scanDir(ctx context.Context, source, root string, cache *version.IndexCache) []Result {
+	extractors := r.newExtractors()
+
+	// walkYAML calls fn for each .yaml/.yml file under root, one at a time.
+	walkYAML := func(fn func(path string, content []byte)) {
+		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if !isYAML(path) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			fn(path, content)
+			return nil
+		})
+	}
+
+	// Pass 1: Prepare - let extractors collect cross-file references
+	walkYAML(func(path string, content []byte) {
+		for _, ex := range extractors {
+			if err := ex.PrepareFile(path, content); err != nil {
+				slog.Warn("extractor prepare failed", "type", ex.Type(), "file", path, "error", err)
+			}
+		}
+	})
+
+	// Pass 2: Extract chart references
+	var pending []pendingCheck
+	walkYAML(func(path string, content []byte) {
+		for _, ex := range extractors {
+			if !ex.Match(path, content) {
+				continue
+			}
+			chartName, refs, err := ex.Extract(path, content)
+			if err != nil {
+				slog.Warn("extract failed", "file", path, "type", ex.Type(), "error", err)
+				continue
+			}
+			for _, ref := range refs {
+				pending = append(pending, pendingCheck{source: source, chart: chartName, exType: ex.Type(), ref: ref})
+			}
+		}
+	})
+
+	// Pass 3: Check versions concurrently
+	var (
+		results []Result
+		mu      sync.Mutex
+	)
+	runConcurrent(ctx, pending, r.parallelChecks, func(ctx context.Context, p pendingCheck) {
+		latest, err := version.Latest(ctx, cache, p.ref.Protocol, p.ref.Repository, p.ref.Name, p.ref.CurrentVersion, r.scope)
+		if err != nil {
+			slog.Debug("version check failed", "dep", p.ref.Name, "error", err)
+			latest = ""
+		}
+
+		chart := p.ref.Chart
+		if chart == "" {
+			chart = p.chart
+		}
+
+		mu.Lock()
+		results = append(results, Result{
+			Source:          p.source,
+			Chart:           chart,
+			Dependency:      p.ref.Name,
+			Type:            p.exType,
+			Protocol:        p.ref.Protocol,
+			CurrentVersion:  p.ref.CurrentVersion,
+			LatestVersion:   latest,
+			Scope:           string(r.scope),
+			UpdateAvailable: isNewer(latest, p.ref.CurrentVersion),
+			CheckedAt:       time.Now(),
+		})
+		mu.Unlock()
+	})
+
+	return results
+}
+
+func isYAML(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".yaml" || ext == ".yml"
+}
+
+// isNewer reports whether latest represents a strictly greater version than current.
+func isNewer(latest, current string) bool {
+	if latest == "" {
+		return false
+	}
+	l, err1 := semver.NewVersion(latest)
+	c, err2 := semver.NewVersion(current)
+	if err1 != nil || err2 != nil {
+		return latest != current
+	}
+	return l.GreaterThan(c)
+}
+
+// ============================================================================
+// Git Operations
+// ============================================================================
+
 func syncRepo(ctx context.Context, rt RepoTarget, dest string) error {
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
 		return fetchRepo(ctx, rt, dest)
@@ -203,9 +346,11 @@ func fetchRepo(ctx context.Context, rt RepoTarget, dest string) error {
 	return nil
 }
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
 // runConcurrent fans out fn across items using at most limit goroutines.
-// It stops launching new goroutines when ctx is cancelled; already-running
-// goroutines receive the cancelled context and are expected to return promptly.
 func runConcurrent[T any](ctx context.Context, items []T, limit int, fn func(context.Context, T)) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, limit)
@@ -225,9 +370,7 @@ func runConcurrent[T any](ctx context.Context, items []T, limit int, fn func(con
 	wg.Wait()
 }
 
-// safeName converts s into a string safe for use as a directory name by
-// replacing any character that is not a letter, digit, dash, dot, or
-// underscore with a dash.
+// safeName converts s into a string safe for use as a directory name.
 func safeName(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {

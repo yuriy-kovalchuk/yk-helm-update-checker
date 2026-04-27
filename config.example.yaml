@@ -1,29 +1,36 @@
-# yk-update-checker configuration
+# yk-update-checker scanner configuration
 #
-# update_type controls the maximum upgrade scope reported.
+# This file is read by the scanner (update-checker-scanner).
+# When deploying via Helm, this is generated from chart values — edit values.yaml instead.
+
+# Maximum upgrade scope to report.
 #   all   – any newer stable release (default)
-#   major – any newer release (same as all)
 #   minor – only minor and patch upgrades within the same major
 #   patch – only patch upgrades within the same major.minor
 update_type: all
 
-# parallel_checks limits how many registry version lookups run at once.
-# Lower values reduce memory and outbound connection pressure.
-# Default: 5
+# Maximum concurrent registry version lookups per scan.
 parallel_checks: 5
+
+# Optional: persist the git clone cache between runs.
+# Avoids re-cloning repositories on every scan.
+# Mount a PVC at this path and set scanner.gitCacheDir in values.yaml.
+# git_cache_dir: /cache/git
 
 repos:
   # Public repository — no auth required
   - name: homelab
     repo: https://github.com/example/my-gitops-repo
-    path: kubernetes/apps          # optional: scan only this sub-path
+    path: kubernetes/apps   # optional: scan only this sub-path
 
-  # Private repository — HTTPS token (GitHub/GitLab/Gitea personal access token)
-  - name: private-helmfile
+  # Private repository — HTTPS token
+  # Via Helm: use auth.existingSecret (generates token_file automatically)
+  # Directly: point token_file at a mounted file, or use token for inline (not recommended)
+  - name: private-repo
     repo: https://github.com/example/private-repo
     auth:
       type: token
-      token: ghp_xxxxxxxxxxxxxxxxxxxx
+      token_file: /etc/update-checker-scanner/secrets/example/private-repo/token
 
   # Private repository — HTTPS basic auth
   - name: gitea-private
@@ -31,11 +38,11 @@ repos:
     auth:
       type: basic
       username: myuser
-      password: mypassword
+      password_file: /etc/update-checker-scanner/secrets/org/repo/password
 
   # Private repository — SSH key
   - name: ssh-repo
     repo: git@github.com:example/private-repo.git
     auth:
       type: ssh
-      ssh_key_path: /etc/yk-update-checker/ssh/id_rsa
+      ssh_key_path: /etc/update-checker-scanner/secrets/example/private-repo/ssh-key

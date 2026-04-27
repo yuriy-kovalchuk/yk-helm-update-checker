@@ -7,14 +7,11 @@ metadata:
     {{- include "yk-update-checker.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    update_type: {{ .Values.config.updateType | quote }}
-    parallel_checks: {{ .Values.config.parallelChecks }}
-    {{- if .Values.config.gitCacheDir }}
-    git_cache_dir: {{ .Values.config.gitCacheDir | quote }}
-    {{- end }}
+    update_type: {{ .Values.scanner.config.updateType | quote }}
+    parallel_checks: {{ .Values.scanner.config.parallelChecks }}
     repos:
-    {{- if .Values.config.repos }}
-    {{- range .Values.config.repos }}
+    {{- if .Values.scanner.config.repos }}
+    {{- range .Values.scanner.config.repos }}
       - name: {{ .name | quote }}
         repo: {{ .repo | quote }}
         {{- if .path }}
@@ -27,12 +24,12 @@ data:
           {{- $orgRepo := include "yk-update-checker.repoOrgPath" .repo }}
           {{- $key := default "token" .auth.existingSecretKey }}
           {{- if eq .auth.type "token" }}
-          token_file: {{ printf "/etc/yk-update-checker/secrets/%s/%s" $orgRepo $key | quote }}
+          token_file: {{ printf "/etc/update-checker-scanner/secrets/%s/%s" $orgRepo $key | quote }}
           {{- else if eq .auth.type "basic" }}
           username: {{ .auth.username | quote }}
-          password_file: {{ printf "/etc/yk-update-checker/secrets/%s/%s" $orgRepo $key | quote }}
+          password_file: {{ printf "/etc/update-checker-scanner/secrets/%s/%s" $orgRepo $key | quote }}
           {{- else if eq .auth.type "ssh" }}
-          ssh_key_path: {{ printf "/etc/yk-update-checker/secrets/%s/%s" $orgRepo $key | quote }}
+          ssh_key_path: {{ printf "/etc/update-checker-scanner/secrets/%s/%s" $orgRepo $key | quote }}
           {{- end }}
           {{- else }}
           {{- if .auth.token }}

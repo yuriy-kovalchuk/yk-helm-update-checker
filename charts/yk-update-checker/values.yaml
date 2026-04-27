@@ -1,97 +1,222 @@
 # Default values for yk-update-checker.
+# This chart deploys three components:
+# - API (Deployment): Manages SQLite database, provides REST API
+# - Scanner (CronJob): Scans Git repos and posts results to API
+# - Dashboard (Deployment): Web UI that proxies to API
 
-replicaCount: 1
+# ============================================================================
+# API Configuration (Deployment)
+# ============================================================================
+api:
+  image:
+    repository: ghcr.io/yuriy-kovalchuk/update-checker-api
+    pullPolicy: IfNotPresent
+    tag: ""
 
-image:
-  repository: ghcr.io/yuriy-kovalchuk/yk-helm-update-checker
-  pullPolicy: IfNotPresent
-  # Overrides the image tag. Defaults to Chart.appVersion when empty.
-  tag: ""
+  replicaCount: 1
 
+  # Enable verbose / debug logging.
+  verbose: false
+
+  # Enable manual scan trigger via K8s Jobs.
+  enableTrigger: true
+
+  # Database persistence.
+  persistence:
+    existingClaim: ""
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 1Gi
+
+  # Database path within the persistent volume.
+  databasePath: /data/update-checker-scanner.db
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  # Extra CLI flags.
+  extraArgs: []
+
+  # Extra environment variables (API only).
+  extraEnv: []
+
+# ============================================================================
+# Scanner Configuration (CronJob)
+# ============================================================================
+scanner:
+  image:
+    repository: ghcr.io/yuriy-kovalchuk/update-checker-scanner
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # CronJob schedule (default: every 6 hours).
+  schedule: "0 */6 * * *"
+
+  # Enable verbose / debug logging.
+  verbose: false
+
+  # Application configuration for scanning.
+  config:
+    # Maximum upgrade scope to report.
+    # One of: all | major | minor | patch
+    updateType: all
+
+    # Maximum concurrent registry version lookups per scan.
+    parallelChecks: 5
+
+    # List of Git repositories to scan.
+    repos: []
+    # repos:
+    #   - name: homelab
+    #     repo: https://github.com/example/my-gitops-repo
+    #     path: kubernetes/apps
+    #
+    #   - name: private-repo
+    #     repo: https://github.com/example/private-repo
+    #     auth:
+    #       type: token
+    #       existingSecret: my-github-token-secret
+    #       existingSecretKey: token
+
+  # CronJob settings.
+  cronjob:
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 1
+    concurrencyPolicy: Forbid
+    ttlSecondsAfterFinished: 86400
+    restartPolicy: Never
+    backoffLimit: 0
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Optional path for persistent git cache (avoids re-cloning on every run).
+  # Mount the backing volume via extraVolumes + extraVolumeMounts.
+  gitCacheDir: ""
+
+  # Extra volumes and mounts.
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  # Extra CLI flags.
+  extraArgs: []
+
+  # Extra environment variables (scanner only).
+  extraEnv: []
+
+# ============================================================================
+# Dashboard Configuration (Deployment)
+# ============================================================================
+dashboard:
+  # Enable/disable the dashboard component.
+  enabled: true
+
+  image:
+    repository: ghcr.io/yuriy-kovalchuk/update-checker-dashboard
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  replicaCount: 1
+
+  # Enable verbose / debug logging.
+  verbose: false
+
+  # Service configuration.
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+
+  # Ingress configuration.
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: yk-update-checker.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+
+  pdb:
+    enabled: false
+    minAvailable: 1
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+  # Extra CLI flags.
+  extraArgs: []
+
+  # Extra environment variables (dashboard only).
+  extraEnv: []
+
+# ============================================================================
+# Shared Configuration
+# ============================================================================
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# Enable verbose / debug logging in the application.
-verbose: false
-
-# Application configuration.
-# These values are rendered into a config.yaml mounted at /etc/yk-update-checker/config.yaml.
-config:
-  # Maximum upgrade scope to report.
-  # One of: all | major | minor | patch
-  updateType: all
-
-  # Maximum concurrent registry version lookups per scan.
-  # Lower values reduce memory and outbound connection pressure.
-  parallelChecks: 5
-
-  # Persist git clones between scans to avoid full re-clones.
-  # Leave empty to use a temporary directory (cleaned up after each scan).
-  # When set, mount a PVC at this path for durable storage.
-  gitCacheDir: ""
-
-  # List of Git repositories to scan.
-  # For repos with credentials set auth.existingSecret to avoid storing
-  # sensitive values in the ConfigMap.
-  repos: []
-  # repos:
-  #   # Public repository
-  #   - name: homelab
-  #     repo: https://github.com/example/my-gitops-repo
-  #     path: kubernetes/apps
-  #
-  #   # Private — HTTPS token inline (dev/test only; prefer existingSecret per-repo auth in prod)
-  #   - name: private-repo
-  #     repo: https://github.com/example/private-repo
-  #     auth:
-  #       type: token
-  #       token: ghp_xxxx
-  #
-  #   # Private — HTTPS token from a Kubernetes Secret (recommended)
-  #   # The Secret must contain a key matching existingSecretKey (default: "token").
-  #   # It is auto-mounted at /etc/yk-update-checker/secrets/example/private-repo/.
-  #   - name: private-repo
-  #     repo: https://github.com/example/private-repo
-  #     auth:
-  #       type: token
-  #       existingSecret: my-github-token-secret
-  #       existingSecretKey: token   # optional, defaults to "token"
-  #
-  #   # Private — HTTPS basic auth inline
-  #   - name: gitea-repo
-  #     repo: https://gitea.example.com/org/repo
-  #     auth:
-  #       type: basic
-  #       username: myuser
-  #       password: mypassword
-  #
-  #   # Private — HTTPS basic auth with password from a Secret
-  #   - name: gitea-repo
-  #     repo: https://gitea.example.com/org/repo
-  #     auth:
-  #       type: basic
-  #       username: myuser
-  #       existingSecret: my-gitea-secret
-  #       existingSecretKey: password
-  #
-  #   # Private — SSH key from a Secret
-  #   # The Secret key is mounted as ssh_key_path at the auto-derived path.
-  #   - name: ssh-repo
-  #     repo: git@github.com:example/private-repo.git
-  #     auth:
-  #       type: ssh
-  #       existingSecret: my-ssh-key-secret
-  #       existingSecretKey: id_rsa
-
 serviceAccount:
-  # Create a dedicated ServiceAccount for this deployment.
   create: true
-  # Disable automatic token mounting (principle of least privilege).
   automount: false
-  # Additional annotations, e.g. for IRSA / Workload Identity.
   annotations: {}
-  # Override the generated name.
   name: ""
 
 podAnnotations: {}
@@ -111,79 +236,10 @@ securityContext:
     drop: [ALL]
   readOnlyRootFilesystem: true
 
-service:
-  type: ClusterIP
-  port: 80
-  annotations: {}
-
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  #   kubernetes.io/ingress.class: nginx
-  #   cert-manager.io/cluster-issuer: letsencrypt-prod
-  hosts:
-    - host: yk-update-checker.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-  # tls:
-  #   - hosts:
-  #       - yk-update-checker.example.com
-  #     secretName: yk-update-checker-tls
-
-resources:
-  requests:
-    cpu: 50m
-    memory: 128Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
-
-livenessProbe:
-  httpGet:
-    path: /health
-    port: http
-  initialDelaySeconds: 5
-  periodSeconds: 30
-  failureThreshold: 3
-  timeoutSeconds: 5
-
-readinessProbe:
-  httpGet:
-    path: /ready
-    port: http
-  initialDelaySeconds: 5
-  periodSeconds: 10
-  failureThreshold: 3
-  timeoutSeconds: 5
-
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 5
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
-
-pdb:
-  enabled: false
-  minAvailable: 1
-  # maxUnavailable: 1
-
 nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Extra environment variables injected into the container.
+# Extra environment variables applied to ALL components.
+# For per-component variables use api.extraEnv, scanner.extraEnv, or dashboard.extraEnv.
 extraEnv: []
-# extraEnv:
-#   - name: HTTPS_PROXY
-#     value: http://proxy.example.com:3128
-
-# Extra volumes and mounts (e.g. for SSH keys or additional config).
-extraVolumes: []
-extraVolumeMounts: []
-
-# Extra CLI flags passed verbatim to the binary after the standard ones.
-extraArgs: []

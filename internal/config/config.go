@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,10 +35,13 @@ type Repo struct {
 }
 
 type Config struct {
-	Repos          []Repo `yaml:"repos"`
-	UpdateType     string `yaml:"update_type"`
-	ParallelChecks int    `yaml:"parallel_checks"`
-	GitCacheDir    string `yaml:"git_cache_dir"`
+	Repos          []Repo        `yaml:"repos"`
+	UpdateType     string        `yaml:"update_type"`
+	ParallelChecks int           `yaml:"parallel_checks"`
+	GitCacheDir    string        `yaml:"git_cache_dir"`
+	ScanInterval   time.Duration `yaml:"scan_interval"`
+	StartupScan    bool          `yaml:"startup_scan"`
+	StartupDelay   time.Duration `yaml:"startup_delay"`
 }
 
 func Load(path string) (*Config, error) {
@@ -53,7 +57,7 @@ func Load(path string) (*Config, error) {
 		cfg.UpdateType = "all"
 	}
 	if cfg.ParallelChecks <= 0 {
-		cfg.ParallelChecks = 20
+		cfg.ParallelChecks = 5
 	}
 	return &cfg, nil
 }

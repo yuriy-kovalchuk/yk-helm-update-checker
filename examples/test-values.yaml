@@ -1,22 +1,32 @@
 # Test values for yk-update-checker
-# Copy this file and customize for your testing
+# Copy and customize for your environment, then deploy with deploy-test.sh
 
-image:
-  pullPolicy: Always
+api:
+  image:
+    repository: harbor-mgmt.yuriy-lab.cloud/dev/update-checker-api
+    tag: latest
+    pullPolicy: Always
+  verbose: true
 
-verbose: true
+scanner:
+  image:
+    pullPolicy: Always
+    repository: harbor-mgmt.yuriy-lab.cloud/dev/update-checker-scanner
+    tag: latest
 
-config:
-  updateType: all
-  parallelChecks: 5
+  verbose: true
+  config:
+    updateType: all
+    parallelChecks: 5
+    repos:
+      - name: Homelab
+        repo: https://github.com/yuriy-kovalchuk/Homelab
 
-  repos:
-    - name: flux-repo
-      repo: https://github.com/yuriy-kovalchuk/Homelab
-      path: management-cluster/fluxcd
-    - name: test-private-repo
-      repo: https://github.com/yuriy-kovalchuk/test
-      auth:
-        type: token
-        existingSecret: github-token
-        existingSecretKey: token
+
+dashboard:
+  image:
+    pullPolicy: Always
+    repository: harbor-mgmt.yuriy-lab.cloud/dev/update-checker-dashboard
+    tag: latest
+
+  verbose: true

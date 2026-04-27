@@ -29,6 +29,10 @@ func (*HelmChart) Match(path string, _ []byte) bool {
 	return strings.EqualFold(filepath.Base(path), "Chart.yaml")
 }
 
+func (*HelmChart) PrepareFile(_ string, _ []byte) error {
+	return nil // HelmChart doesn't need cross-file preparation
+}
+
 func (*HelmChart) Extract(_ string, content []byte) (string, []ChartRef, error) {
 	var chart chartManifest
 	if err := yaml.Unmarshal(content, &chart); err != nil {

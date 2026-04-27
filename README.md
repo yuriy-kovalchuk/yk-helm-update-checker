@@ -1,106 +1,115 @@
 # yk-update-checker
 
-Scans one or more GitOps repositories for outdated Helm chart dependencies and FluxCD HelmRelease resources. Runs as a one-shot CLI tool or as a persistent web server with a dark-themed UI.
+Scans one or more GitOps repositories for outdated Helm chart dependencies and FluxCD HelmRelease resources, then presents results in a sortable/filterable web UI.
 
-## What it does
+## Architecture
 
-- Clones configured Git repositories (shallow, depth 1)
-- Walks every YAML file looking for Helm `Chart.yaml` dependencies and FluxCD `HelmRelease` manifests
-- Resolves cross-file FluxCD references (`HelmRepository`, `OCIRepository`)
-- Queries the upstream Helm index or OCI registry for the latest stable version
-- Filters results by upgrade scope: `patch`, `minor`, `major`, or `all`
-- Outputs a formatted table (CLI) or serves a sortable/filterable web UI (web mode)
+Three components deployed via a single Helm chart:
+
+| Component | Kind | Role |
+|---|---|---|
+| `update-checker-api` | Deployment | Owns the SQLite database, exposes REST API, triggers scan Jobs |
+| `update-checker-scanner` | CronJob | Clones repos, checks versions, posts results to the API |
+| `update-checker-dashboard` | Deployment | Serves the web UI, proxies `/api/*` to the API |
+
+## What it detects
+
+- Helm `Chart.yaml` dependencies (HTTPS and OCI repositories)
+- FluxCD `HelmRelease` manifests — inline `repoURL`, `sourceRef → HelmRepository`, `chartRef → OCIRepository`
+- Cross-file FluxCD references fully resolved
+
+Upgrade scope is configurable: `patch`, `minor`, `major`, or `all`.
 
 ## Installation
-
-**Binary**
-
-```bash
-make build
-./bin/yk-update-checker -config config.yaml
-```
-
-**Docker**
-
-```bash
-docker run --rm \
-  -v $(pwd)/config.yaml:/etc/yk-update-checker/config.yaml \
-  ghcr.io/yuriy-kovalchuk/yk-helm-update-checker:latest \
-  -config /etc/yk-update-checker/config.yaml
-```
-
-```bash
-docker run --rm \
-  -v $(pwd)/config.yaml:/etc/yk-update-checker/config.yaml -p 8080:8080 \
-  ghcr.io/yuriy-kovalchuk/yk-helm-update-checker:latest \
-  -config /etc/yk-update-checker/config.yaml -web
-```
-
-**Helm**
 
 ```bash
 helm install yk-update-checker \
   oci://ghcr.io/yuriy-kovalchuk/charts/yk-update-checker \
-  --set config.repos[0].name=my-gitops \
-  --set config.repos[0].repo=https://github.com/example/gitops
+  --version <version> \
+  -f values.yaml
 ```
 
-## Configuration
-
-Copy `config.example.yaml` and edit it:
+Minimum `values.yaml`:
 
 ```yaml
-update_type: all   # all | major | minor | patch
-
-repos:
-  - name: homelab
-    repo: https://github.com/example/my-gitops-repo
-    path: kubernetes/apps   # optional sub-path to scan
+scanner:
+  config:
+    repos:
+      - name: homelab
+        repo: https://github.com/example/my-gitops-repo
+        path: kubernetes/apps   # optional sub-path
 ```
 
-## Usage
+## Private repositories
 
-```
-yk-update-checker [flags]
-
-  -config  string   path to config file (default "config.yaml")
-  -scope   string   override update_type from config
-  -web              start web server instead of CLI scan
-  -port    string   web server port (default "8080")
-  -verbose          enable debug logging
-```
-
-**CLI scan**
+Store credentials in a Kubernetes Secret and reference it — do not put tokens or passwords directly in values.
 
 ```bash
-./bin/yk-update-checker -config config.yaml -scope minor
+kubectl create secret generic github-token \
+  --from-literal=token=ghp_xxxxxxxxxxxxxxxxxxxx
 ```
 
-**Web server**
-
-```bash
-./bin/yk-update-checker -web -config config.yaml
-# open http://localhost:8080
+```yaml
+scanner:
+  config:
+    repos:
+      - name: private-repo
+        repo: https://github.com/example/private-repo
+        auth:
+          type: token
+          existingSecret: github-token
+          existingSecretKey: token  # default: token
 ```
 
-## Supported sources
+Supported auth types: `token`, `basic`, `ssh`.
 
-| Source | Pattern |
-|---|---|
-| Helm `Chart.yaml` | `dependencies[].repository` (https and oci) |
-| FluxCD `HelmRelease` | inline `repoURL`, `sourceRef → HelmRepository`, `chartRef → OCIRepository` |
+## Key chart values
 
-Multi-document YAML files (`---` separated) are fully supported.
+```yaml
+scanner:
+  schedule: "0 */6 * * *"      # CronJob schedule
+  config:
+    updateType: all             # all | major | minor | patch
+    parallelChecks: 5
+
+  # Persistent git cache — avoids re-cloning on every run.
+  # Mount the backing volume via scanner.extraVolumes + extraVolumeMounts.
+  gitCacheDir: ""
+
+api:
+  persistence:
+    size: 1Gi
+  enableTrigger: true           # allow manual scans from the UI
+
+dashboard:
+  ingress:
+    enabled: false
+
+# Per-component environment variables
+api:
+  extraEnv: []
+scanner:
+  extraEnv: []
+dashboard:
+  extraEnv: []
+
+# Applied to all components
+extraEnv: []
+```
 
 ## Development
 
 ```bash
-make build    # compile binary to bin/
-make test     # run tests with race detector
-make clean    # remove build artifacts
+make build          # compile all three binaries to bin/
+make test           # run tests with race detector
+
+# Run locally (three terminals)
+make run-api
+make run-scanner    # reads config.yaml, posts to localhost:8080
+make run-dashboard  # serves UI at localhost:8081
 ```
 
-CI runs on every push and pull request to `master`. Releases are triggered by pushing a `v*` tag, which builds and pushes the Docker image and Helm chart to GHCR.
+Releases are triggered by pushing a `v*` tag. CI builds and pushes all three Docker images and the Helm chart to GHCR.
 
 ## License
 
