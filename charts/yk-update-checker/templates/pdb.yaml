@@ -1,18 +1,18 @@
-{{- if .Values.pdb.enabled }}
+{{- if and .Values.dashboard.enabled .Values.dashboard.pdb.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "yk-update-checker.fullname" . }}
+  name: {{ include "yk-update-checker.dashboard.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "yk-update-checker.labels" . | nindent 4 }}
+    {{- include "yk-update-checker.dashboard.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      {{- include "yk-update-checker.selectorLabels" . | nindent 6 }}
-  {{- if .Values.pdb.minAvailable }}
-  minAvailable: {{ .Values.pdb.minAvailable }}
-  {{- else if .Values.pdb.maxUnavailable }}
-  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+      {{- include "yk-update-checker.dashboard.selectorLabels" . | nindent 6 }}
+  {{- if .Values.dashboard.pdb.minAvailable }}
+  minAvailable: {{ .Values.dashboard.pdb.minAvailable }}
+  {{- else if .Values.dashboard.pdb.maxUnavailable }}
+  maxUnavailable: {{ .Values.dashboard.pdb.maxUnavailable }}
   {{- end }}
 {{- end }}

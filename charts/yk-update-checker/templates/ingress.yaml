@@ -1,22 +1,22 @@
-{{- if .Values.ingress.enabled -}}
+{{- if and .Values.dashboard.enabled .Values.dashboard.ingress.enabled -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "yk-update-checker.fullname" . }}
+  name: {{ include "yk-update-checker.dashboard.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "yk-update-checker.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+    {{- include "yk-update-checker.dashboard.labels" . | nindent 4 }}
+  {{- with .Values.dashboard.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if .Values.ingress.className }}
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.dashboard.ingress.className }}
+  ingressClassName: {{ .Values.dashboard.ingress.className }}
   {{- end }}
-  {{- if .Values.ingress.tls }}
+  {{- if .Values.dashboard.ingress.tls }}
   tls:
-    {{- range .Values.ingress.tls }}
+    {{- range .Values.dashboard.ingress.tls }}
     - hosts:
         {{- range .hosts }}
         - {{ . | quote }}
@@ -25,7 +25,7 @@ spec:
     {{- end }}
   {{- end }}
   rules:
-    {{- range .Values.ingress.hosts }}
+    {{- range .Values.dashboard.ingress.hosts }}
     - host: {{ .host | quote }}
       http:
         paths:
@@ -34,7 +34,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "yk-update-checker.fullname" $ }}
+                name: {{ include "yk-update-checker.dashboard.fullname" $ }}
                 port:
                   name: http
           {{- end }}

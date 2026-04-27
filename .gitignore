@@ -28,6 +28,7 @@ Thumbs.db
 
 # Project specific
 todo/
+data/
 test-repo/
-yk-api-*
+update-checker-api-*
 yk-update-checker-*

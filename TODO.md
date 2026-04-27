@@ -2,26 +2,20 @@
 
 ## High — production readiness
 
-- [ ] **Native chart version checking** — currently only `dependencies:` in Chart.yaml are checked; add support for checking the chart's own version against an upstream repository (e.g. check if local `nginx` v15.0.0 has updates in bitnami repo)
-- [ ] **Unit tests** — no tests exist for any package; start with `extractor/`, `version/engine.go`, and `scan/scanner.go`
-- [ ] **Private OCI registry auth** — relies on `authn.DefaultKeychain`; add explicit token/basic-auth option in config
-- [ ] **Scheduled scans** — add a `scan_interval` config option (e.g. `6h`) to re-scan automatically without external tooling
-- [ ] **Startup scan** — auto-trigger the first scan on startup so the UI is not empty on first load
+- [ ] **Unit tests** — no tests exist; start with `internal/extractor/`, `internal/version/`, and `internal/scan/`
+- [ ] **Private OCI registry auth** — version resolution falls back to `authn.DefaultKeychain`; add explicit token/basic-auth config for private OCI chart registries (same auth model as repos)
 
 ## Medium — quality and UX
 
-- [ ] **HTTP mock tests** — test the HTTPS version check path against a recorded `index.yaml` without hitting real registries
-- [ ] **OCI mock tests** — test the OCI version check path using `go-containerregistry`'s in-process registry test helper
-- [ ] **Per-repo scan progress** — surface per-repo state in `/api/status` so the UI can show a progress list
-- [ ] **Update-available filter in UI** — add a one-click toggle to show only charts with pending updates
-- [ ] **JSON output for CLI** — add `--output json` flag alongside the default table so results can be piped to other tools
-- [ ] **Rate limiting** — add a simple token or IP-based rate limit to `/api/scan`
-- [ ] **HTTPRoute support** — add a Helm chart template for Gateway API `HTTPRoute` as an alternative to `Ingress`
+- [ ] **Per-repo scan progress** — surface per-repo state in `/api/status` so the UI can show which repos are still being cloned/scanned
+- [ ] **Native chart version checking** — only `dependencies[]` in `Chart.yaml` are checked; add support for checking the chart's own version against its upstream source repo
+- [ ] **HTTP mock tests** — test the HTTPS version-check path against a recorded `index.yaml` without hitting real registries
+- [ ] **OCI mock tests** — test the OCI version-check path using `go-containerregistry`'s in-process registry test helper
 
 ## Low — features and deployment
 
-- [ ] **Scan result persistence** — results live only in memory; write to a local JSON file or SQLite between scans
 - [ ] **Prometheus metrics** — expose `/metrics` with gauges for total charts, updates available, and last scan duration
-- [ ] **Notification webhooks** — POST to Slack/Discord/generic URL when new updates are detected vs the previous scan
-- [ ] **Grafana dashboard** — reference JSON dashboard for update counts and scan duration (requires Prometheus metrics)
-- [ ] **Image tag scanning** — extend the extractor to pull container image tags from `values.yaml` and check for newer digests
+- [ ] **Notification webhooks** — POST to Slack/Discord/generic URL when updates are detected that weren't present in the previous scan
+- [ ] **Grafana dashboard** — reference JSON for update counts and scan duration (requires Prometheus metrics)
+- [ ] **HTTPRoute support** — add a Helm template for Gateway API `HTTPRoute` as an alternative to `Ingress`
+- [ ] **Image tag scanning** — extend extractors to find container image tags in `values.yaml` and check for newer versions/digests

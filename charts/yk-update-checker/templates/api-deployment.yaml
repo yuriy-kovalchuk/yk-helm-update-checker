@@ -1,26 +1,24 @@
-{{- if .Values.dashboard.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "yk-update-checker.dashboard.fullname" . }}
+  name: {{ include "yk-update-checker.api.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "yk-update-checker.dashboard.labels" . | nindent 4 }}
+    {{- include "yk-update-checker.api.labels" . | nindent 4 }}
 spec:
-  {{- if not .Values.dashboard.autoscaling.enabled }}
-  replicas: {{ .Values.dashboard.replicaCount }}
-  {{- end }}
+  replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
-      {{- include "yk-update-checker.dashboard.selectorLabels" . | nindent 6 }}
+      {{- include "yk-update-checker.api.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
-        {{- include "yk-update-checker.dashboard.labels" . | nindent 8 }}
+        {{- include "yk-update-checker.api.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -33,20 +31,24 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: dashboard
-          image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           args:
-            - -api-url
-            - {{ include "yk-update-checker.api.url" . }}
+            - -db
+            - {{ .Values.api.databasePath }}
             - -port
             - "8080"
-            {{- if .Values.dashboard.verbose }}
+            {{- if .Values.api.enableTrigger }}
+            - -cronjob
+            - {{ include "yk-update-checker.scanner.fullname" . }}
+            {{- end }}
+            {{- if .Values.api.verbose }}
             - -verbose
             {{- end }}
-            {{- with .Values.dashboard.extraArgs }}
+            {{- with .Values.api.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
@@ -54,15 +56,22 @@ spec:
               containerPort: 8080
               protocol: TCP
           livenessProbe:
-            {{- toYaml .Values.dashboard.livenessProbe | nindent 12 }}
+            {{- toYaml .Values.api.livenessProbe | nindent 12 }}
           readinessProbe:
-            {{- toYaml .Values.dashboard.readinessProbe | nindent 12 }}
+            {{- toYaml .Values.api.readinessProbe | nindent 12 }}
           resources:
-            {{- toYaml .Values.dashboard.resources | nindent 12 }}
-          {{- with concat .Values.extraEnv .Values.dashboard.extraEnv }}
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- with concat .Values.extraEnv .Values.api.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "yk-update-checker.pvcName" . }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -75,4 +84,3 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-{{- end }}

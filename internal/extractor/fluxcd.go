@@ -75,8 +75,8 @@ type repoEntry struct {
 
 // FluxCD extracts chart refs from FluxCD HelmRelease manifests.
 //
-// It implements Contextual: the scanner calls Prepare with every YAML file
-// in the scan root before any Extract calls. Prepare collects all
+// It uses PrepareFile: the scanner calls PrepareFile with every YAML file
+// in the scan root before any Extract calls. PrepareFile collects all
 // HelmRepository and OCIRepository resources so that HelmRelease
 // sourceRef/chartRef cross-file lookups can succeed.
 type FluxCD struct {
@@ -127,8 +127,6 @@ func (f *FluxCD) PrepareFile(_ string, content []byte) error {
 
 		case "OCIRepository":
 			protocol, bare := ParseProtocol(doc.Spec.URL)
-			// OCI URL encodes the chart name as its last path segment:
-			//   ghcr.io/org/charts/chartname → repo=ghcr.io/org/charts  chart=chartname
 			repo, chart := SplitOCIRef(bare)
 			f.oci[key] = repoEntry{
 				protocol:  protocol,
@@ -171,7 +169,7 @@ func (f *FluxCD) refsFromRelease(hr helmReleaseResource) []ChartRef {
 	releaseName := hr.Metadata.Name
 	releaseNS := hr.Metadata.Namespace
 
-	// ── Pattern 3: chartRef → OCIRepository ──────────────────────────────
+	// Pattern 3: chartRef → OCIRepository
 	if cr := hr.Spec.ChartRef; cr != nil && cr.Kind == "OCIRepository" {
 		ns := cr.Namespace
 		if ns == "" {
@@ -197,7 +195,7 @@ func (f *FluxCD) refsFromRelease(hr helmReleaseResource) []ChartRef {
 
 	cs := hr.Spec.Chart.Spec
 
-	// ── Pattern 2: sourceRef → HelmRepository ────────────────────────────
+	// Pattern 2: sourceRef → HelmRepository
 	if sr := cs.SourceRef; sr != nil && sr.Kind == "HelmRepository" {
 		ns := sr.Namespace
 		if ns == "" {
@@ -221,7 +219,7 @@ func (f *FluxCD) refsFromRelease(hr helmReleaseResource) []ChartRef {
 		}}
 	}
 
-	// ── Pattern 1: inline repoURL ─────────────────────────────────────────
+	// Pattern 1: inline repoURL
 	if cs.RepoURL == "" || cs.Chart == "" || cs.Version == "" {
 		return nil
 	}
